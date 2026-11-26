@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, FormEvent, ReactNode } from 'react';
 import { api } from './api';
 import './App.css';
+import {
+  CustomerWorkspace, DemandWorkspace, NetworkWorkspace, RoutesWorkspace,
+  SellerWorkspace, TransfersWorkspace,
+} from './Workspaces';
 
-const CURRENT_PVZ_ID = 1;
-
-type Tab = 'dash' | 'intake' | 'stock' | 'accruals';
+type Tab = 'dash' | 'intake' | 'stock' | 'accruals' | 'network' | 'demand' | 'routes' | 'transfers' | 'seller' | 'customer';
 
 type Capacity = {
   pvz_id: number;
@@ -54,6 +56,8 @@ type Pvz = {
   city: string;
   address: string;
   capacity_units: number;
+  is_hub?: boolean;
+  is_mesh_enabled?: boolean;
 };
 
 const money = (value: number) =>
@@ -135,15 +139,29 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
   );
 }
 
-const navItems: { id: Tab; label: string; icon: string }[] = [
-  { id: 'dash', label: 'Обзор', icon: 'grid' },
-  { id: 'intake', label: 'Приёмка товара', icon: 'box' },
-  { id: 'stock', label: 'Хранение', icon: 'warehouse' },
-  { id: 'accruals', label: 'Начисления', icon: 'wallet' },
+const navGroups: { label: string; items: { id: Tab; label: string; icon: string }[] }[] = [
+  { label: 'ОПЕРАТОР', items: [
+    { id: 'dash', label: 'Обзор ПВЗ', icon: 'grid' },
+    { id: 'intake', label: 'Приёмка товара', icon: 'box' },
+    { id: 'stock', label: 'Хранение', icon: 'warehouse' },
+    { id: 'accruals', label: 'Начисления', icon: 'wallet' },
+    { id: 'network', label: 'Карта сети', icon: 'pin' },
+    { id: 'demand', label: 'Спрос и TOP-5', icon: 'trend' },
+    { id: 'routes', label: 'Дорожные рейсы', icon: 'arrow' },
+    { id: 'transfers', label: 'Перемещения', icon: 'refresh' },
+  ]},
+  { label: 'ПРОДАВЕЦ', items: [
+    { id: 'seller', label: 'Поставки в Mesh', icon: 'box' },
+  ]},
+  { label: 'ПОКУПАТЕЛЬ', items: [
+    { id: 'customer', label: 'Личный кабинет', icon: 'user' },
+  ]},
 ];
 
 function App() {
   const [tab, setTab] = useState<Tab>('dash');
+  const [selectedPvzId, setSelectedPvzId] = useState(1);
+  const [pvzList, setPvzList] = useState<Pvz[]>([]);
   const [capacity, setCapacity] = useState<Capacity | null>(null);
   const [stock, setStock] = useState<StockItem[]>([]);
   const [accruals, setAccruals] = useState<Accrual[]>([]);
@@ -161,9 +179,9 @@ function App() {
     setError(null);
     try {
       const [cap, st, acc, prod, locations] = await Promise.all([
-        api.getCapacity(CURRENT_PVZ_ID),
-        api.getStock(CURRENT_PVZ_ID),
-        api.getAccruals(CURRENT_PVZ_ID),
+        api.getCapacity(selectedPvzId),
+        api.getStock(selectedPvzId),
+        api.getAccruals(selectedPvzId),
         api.getProducts(),
         api.getPvz(),
       ]);
@@ -171,7 +189,8 @@ function App() {
       setStock(st);
       setAccruals(acc);
       setProducts(prod);
-      setPvz(locations.find((location: Pvz) => location.id === CURRENT_PVZ_ID) || null);
+      setPvzList(locations);
+      setPvz(locations.find((location: Pvz) => location.id === selectedPvzId) || null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить данные');
     } finally {
@@ -181,7 +200,7 @@ function App() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [selectedPvzId]);
 
   const productById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),
@@ -211,7 +230,7 @@ function App() {
     return matchesSearch && matchesFilter;
   });
 
-  const currentTitle = navItems.find((item) => item.id === tab)?.label || 'Обзор';
+  const currentTitle = navGroups.flatMap((group) => group.items).find((item) => item.id === tab)?.label || 'Обзор';
   const now = new Date();
   const greeting = now.getHours() < 12 ? 'Доброе утро' : now.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
 
@@ -221,10 +240,9 @@ function App() {
     const form = new FormData(formElement);
     setSubmitting(true);
     try {
-      await api.intake(CURRENT_PVZ_ID, {
+      await api.intake(selectedPvzId, {
         product_id: Number(form.get('product_id')),
         qty: Number(form.get('qty')),
-        top_flag: form.get('top_flag') === 'on',
       });
       formElement.reset();
       await loadData();
@@ -238,7 +256,9 @@ function App() {
 
   const handleRelocate = async (item: StockItem) => {
     try {
-      await api.relocate(item.id, { target_pvz_id: 2, reason: 'manual' });
+      const target = pvzList.find((location) => location.id !== selectedPvzId && !location.is_hub);
+      if (!target) throw new Error('Нет другого ПВЗ для перемещения');
+      await api.relocate(item.id, { target_pvz_id: target.id, reason: 'manual' });
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка перемещения');
@@ -337,29 +357,33 @@ function App() {
         </div>
 
         <div className="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-        <div className="location-switch">
+        <div className="location-switch location-switch-select">
           <div className="location-icon"><Icon name="pin" size={18} /></div>
           <div className="location-copy">
-            <strong>{pvz ? pvz.city : 'Пункт выдачи'}</strong>
-            <span>{pvz?.address || 'Загрузка адреса…'}</span>
+            <strong>Текущий объект</strong>
+            <select aria-label="Выбрать пункт выдачи или склад" value={selectedPvzId} onChange={(event) => setSelectedPvzId(Number(event.target.value))}>
+              {pvzList.map((location) => <option key={location.id} value={location.id}>
+                {location.is_hub ? 'Склад · ' : 'ПВЗ · '}{location.city}, {location.address}
+              </option>)}
+            </select>
           </div>
-          <Icon name="chevron" size={16} />
         </div>
 
-        <div className="nav-caption">МЕНЮ</div>
-        <nav className="sidebar-nav" aria-label="Основная навигация">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              className={'nav-item ' + (tab === item.id ? 'active' : '')}
-              onClick={() => { setTab(item.id); setMobileNavOpen(false); }}
-            >
-              <Icon name={item.icon} size={19} />
-              <span>{item.label}</span>
-              {item.id === 'stock' && expiringItems.length > 0 && <b className="nav-count">{expiringItems.length}</b>}
-            </button>
-          ))}
-        </nav>
+        {navGroups.map((group) => (
+          <div className="nav-group" key={group.label}>
+            <div className="nav-caption">{group.label}</div>
+            <nav className="sidebar-nav" aria-label={group.label}>
+              {group.items.map((item) => (
+                <button key={item.id} className={'nav-item ' + (tab === item.id ? 'active' : '')}
+                  onClick={() => { setTab(item.id); setMobileNavOpen(false); }}>
+                  <Icon name={item.icon} size={19} />
+                  <span>{item.label}</span>
+                  {item.id === 'stock' && expiringItems.length > 0 && <b className="nav-count">{expiringItems.length}</b>}
+                </button>
+              ))}
+            </nav>
+          </div>
+        ))}
 
         <div className="sidebar-bottom">
           <div className="help-card">
@@ -554,10 +578,9 @@ function App() {
                   </div>
                   <div className="field-hint">Количество единиц товара в текущей поставке.</div>
 
-                  <div className="priority-option">
-                    <div className="priority-icon"><Icon name="spark" size={18} /></div>
-                    <div className="priority-copy"><strong>TOP-позиция</strong><span>Отметьте товар с высоким спросом для приоритетной локальной маршрутизации.</span></div>
-                    <label className="switch"><input type="checkbox" name="top_flag" /><span /></label>
+                  <div className="automatic-top-note">
+                    <Icon name="spark" size={18} />
+                    <div><strong>TOP рассчитывается автоматически</strong><span>Приоритет определяется недельным спросом, габаритами товара и свободным объёмом этого ПВЗ.</span></div>
                   </div>
 
                   <div className="form-summary">
@@ -654,6 +677,13 @@ function App() {
               </section>
             </>
           )}
+
+          {tab === 'network' && <NetworkWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'demand' && <DemandWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'routes' && <RoutesWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'transfers' && <TransfersWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'seller' && <SellerWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'customer' && <CustomerWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
 
           <footer className="page-footer"><span>mesh. · Кабинет пункта выдачи</span><span>Данные обновляются при синхронизации <i /></span></footer>
         </div>
