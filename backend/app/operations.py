@@ -29,7 +29,7 @@ from app.models import (
 from app.tariffs import HUB_PER_KM, TOP_RECHECK_DAYS
 
 router = APIRouter(tags=["operations", "returns", "finance"])
-OCCUPIED_STATUSES = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER", "RETURNED", "DAMAGED")
+OCCUPIED_STATUSES = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER", "RETURNED", "DAMAGED", "EXPIRED")
 
 
 class ReturnRequest(BaseModel):
