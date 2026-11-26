@@ -356,6 +356,7 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
         _storage_capacity,
         _volume_m3,
         calculate_assortment,
+        plan_rebalancing,
     )
     unit_volume = _volume_m3(product)
     if unit_volume > category_volume_limit(product):
@@ -393,6 +394,7 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
     )
     set_stock_status(db, item, "STORED")
     calculate_assortment(db, pvz, sync_flags=True)
+    plan_rebalancing(db)
     db.commit()
     db.refresh(item)
     return item
