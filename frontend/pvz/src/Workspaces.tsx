@@ -50,7 +50,7 @@ function Message({ value, onClose }: { value: string; onClose: () => void }) {
   return <div className="workspace-message"><span>{value}</span><button onClick={onClose}>×</button></div>;
 }
 
-export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
+export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [map, setMap] = useState<NetworkMap>({ locations: [], edges: [] });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -153,6 +153,7 @@ export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
       setForm((current) => ({ ...current, address: '', latitude: '', longitude: '' }));
       setMessage(form.type === 'hub' ? 'Склад добавлен в сеть.' : 'Пункт выдачи добавлен в сеть.');
       await load();
+      onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
@@ -172,7 +173,7 @@ export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
     <Message value={message} onClose={() => setMessage('')} />
     <div className="workspace-intro"><div><span className="workspace-kicker">ОПЕРАТОР · ГЕОГРАФИЯ</span><h1>Сеть пунктов и складов</h1><p>Добавляйте точки, задавайте их координаты и связывайте дорожными рёбрами для расчёта маршрутов.</p></div><div className="workspace-mini-stats"><div><strong>{map.locations.filter((x) => !x.is_hub).length}</strong><span>ПВЗ</span></div><div><strong>{map.locations.filter((x) => x.is_hub).length}</strong><span>Склады</span></div><div><strong>{map.edges.length}</strong><span>Дорог</span></div></div></div>
 
-    <Panel title="Карта сети Mesh" subtitle="Схематичная карта узлов. Нажмите «Выбрать точку на карте», затем кликните, чтобы задать координаты нового объекта.">
+    <Panel title="Карта сети Mesh" subtitle="Карта OpenStreetMap с маркерами ПВЗ и складов. Выберите город, затем кликните на карте, чтобы задать координаты новой точки.">
       <div className="network-map-toolbar">
         <span><i className="map-dot map-dot-pvz" /> Пункт выдачи <i className="map-dot map-dot-hub" /> Склад / хаб <i className="map-line" /> Дорога</span>
         <div className="network-map-actions">
@@ -237,10 +238,11 @@ export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
   </div>;
 }
 
-export function DemandWorkspace({ selectedPvzId }: WorkspaceProps) {
+export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
   const [raw, setRaw] = useState('1, 18\n2, 12\n3, 9\n4, 7\n5, 5');
   const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
   const [assortment, setAssortment] = useState<Assortment | null>(null);
+  const [products, setProducts] = useState<Product[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -248,7 +250,10 @@ export function DemandWorkspace({ selectedPvzId }: WorkspaceProps) {
     try { setAssortment(await api.getAssortment(selectedPvzId)); }
     catch (error) { setMessage(jsonError(error)); }
   };
-  useEffect(() => { load(); }, [selectedPvzId]);
+  useEffect(() => {
+    load();
+    api.getProducts().then(setProducts).catch((error) => setMessage(jsonError(error)));
+  }, [selectedPvzId]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -262,6 +267,7 @@ export function DemandWorkspace({ selectedPvzId }: WorkspaceProps) {
       const result = await api.uploadDemand(selectedPvzId, { week_start: weekStart, rows });
       setAssortment(result.assortment);
       setMessage('Статистика сохранена. TOP-5 и потребность пересчитаны автоматически; создано перемещений: ' + result.planned_transfers.length + '.');
+      onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
@@ -274,7 +280,7 @@ export function DemandWorkspace({ selectedPvzId }: WorkspaceProps) {
         <form className="workspace-form" onSubmit={save}>
           <label>Начало недели<input type="date" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} required /></label>
           <label>Статистика покупок<textarea rows={8} value={raw} onChange={(e) => setRaw(e.target.value)} spellCheck={false} /></label>
-          <p className="workspace-help">Формат CSV/TSV: <code>product_id, quantity</code>. Данные сохраняются в истории, а повторная загрузка за ту же неделю обновит соответствующие позиции.</p>
+          <p className="workspace-help">Формат CSV/TSV: <code>product_id, quantity</code>. Данные сохраняются в истории, а повторная загрузка за ту же неделю обновит соответствующие позиции.</p><div className="demand-product-reference"><strong>Справочник ID товаров</strong>{products.map((product) => <span key={product.id}><b>#{product.id}</b> {product.name}</span>)}</div>
           <button className="workspace-button primary" disabled={busy}>{busy ? 'Сохраняем и пересчитываем…' : 'Сохранить статистику и пересчитать TOP'}</button>
         </form>
       </Panel>
@@ -373,7 +379,7 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
   </div>;
 }
 
-export function TransfersWorkspace(_: WorkspaceProps) {
+export function TransfersWorkspace({ onRefresh }: WorkspaceProps) {
   const [transfers, setTransfers] = useState<any[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState('');
@@ -381,7 +387,7 @@ export function TransfersWorkspace(_: WorkspaceProps) {
   useEffect(() => { load(); }, []);
   const finish = async (id: number) => {
     setBusyId(id);
-    try { await api.completeTransfer(id); setMessage('Перемещение завершено, остатки ПВЗ пересчитаны.'); await load(); }
+    try { await api.completeTransfer(id); setMessage('Перемещение завершено, остатки ПВЗ пересчитаны.'); await load(); onRefresh?.(); }
     catch (error) { setMessage(jsonError(error)); }
     finally { setBusyId(null); }
   };
@@ -401,7 +407,7 @@ export function TransfersWorkspace(_: WorkspaceProps) {
   </div>;
 }
 
-export function SellerWorkspace({ pvzList }: WorkspaceProps) {
+export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState('');
   const [qty, setQty] = useState('10');
@@ -422,6 +428,7 @@ export function SellerWorkspace({ pvzList }: WorkspaceProps) {
       const response = await api.sellerIntake({ product_id: Number(productId), qty: Number(qty), origin_pvz_id: Number(originId) });
       setResult(response);
       setMessage('Система выбрала место хранения автоматически.');
+      onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
@@ -469,7 +476,7 @@ export function SellerWorkspace({ pvzList }: WorkspaceProps) {
   </div>;
 }
 
-export function CustomerWorkspace({ pvzList }: WorkspaceProps) {
+export function CustomerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [profile, setProfile] = useState<any>({ name: '', phone: '', email: '', city: '', preferred_pvz_id: '' });
   const [orders, setOrders] = useState<any[]>([]);
@@ -507,6 +514,7 @@ export function CustomerWorkspace({ pvzList }: WorkspaceProps) {
       await api.confirmCustomerPickup(orderId, customerId);
       setMessage('Получение заказа #' + orderId + ' подтверждено.');
       setOrders(await api.getCustomerOrders(customerId));
+      onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
@@ -516,6 +524,7 @@ export function CustomerWorkspace({ pvzList }: WorkspaceProps) {
       const response = await api.createCustomerOrder({ product_id: Number(productId), qty: 1, buyer_pvz_id: locationId }, customerId);
       setMessage('Заказ #' + response.id + ' оформлен. ' + response.pickup_address);
       setOrders(await api.getCustomerOrders(customerId));
+      onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
