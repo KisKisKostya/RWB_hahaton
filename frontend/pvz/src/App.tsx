@@ -118,6 +118,7 @@ const iconNodes: Record<string, ReactNode> = {
   chevron: <><path d="m7 10 5 5 5-5" /></>,
   menu: <><path d="M4 6h16M4 12h16M4 18h16" /></>,
   close: <><path d="m6 6 12 12M18 6 6 18" /></>,
+  user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a8 8 0 0 1 16 0v1" /></>,
   spark: <><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3ZM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16Z" /></>,
 };
 
@@ -178,19 +179,32 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [cap, st, acc, prod, locations] = await Promise.all([
-        api.getCapacity(selectedPvzId),
-        api.getStock(selectedPvzId),
-        api.getAccruals(selectedPvzId),
-        api.getProducts(),
-        api.getPvz(),
+      const [locations, prod] = await Promise.all([api.getPvz(), api.getProducts()]);
+      setPvzList(locations);
+      setProducts(prod);
+
+      const activeLocation = locations.find((location: Pvz) => location.id === selectedPvzId) || locations[0] || null;
+      if (!activeLocation) {
+        setPvz(null);
+        setCapacity(null);
+        setStock([]);
+        setAccruals([]);
+        return;
+      }
+      if (activeLocation.id !== selectedPvzId) {
+        setSelectedPvzId(activeLocation.id);
+        return;
+      }
+
+      const [cap, st, acc] = await Promise.all([
+        api.getCapacity(activeLocation.id),
+        api.getStock(activeLocation.id),
+        api.getAccruals(activeLocation.id),
       ]);
       setCapacity(cap);
       setStock(st);
       setAccruals(acc);
-      setProducts(prod);
-      setPvzList(locations);
-      setPvz(locations.find((location: Pvz) => location.id === selectedPvzId) || null);
+      setPvz(activeLocation);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить данные');
     } finally {
