@@ -186,6 +186,7 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
             returned = stock
         else:
             stock.qty -= take
+            stock.order_id = None
             returned = StockItem(
                 product_id=stock.product_id,
                 pvz_id=stock.pvz_id,
