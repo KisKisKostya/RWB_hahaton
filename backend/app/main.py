@@ -350,6 +350,28 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
     if not cap["capacity_ok"]:
         raise HTTPException(409, detail={"error": "no_capacity", "capacity": cap})
 
+    from app.network import (
+        MAX_PVZ_ITEM_VOLUME_M3,
+        _occupied_volume,
+        _storage_capacity,
+        _volume_m3,
+        calculate_assortment,
+    )
+    unit_volume = _volume_m3(product)
+    if unit_volume > MAX_PVZ_ITEM_VOLUME_M3:
+        raise HTTPException(409, detail={
+            "error": "oversized_for_pvz",
+            "volume_m3": round(unit_volume, 4),
+            "recommendation": "Передайте товар через кабинет продавца: Mesh направит его на хаб.",
+        })
+    volume_after_intake = _occupied_volume(db, pvz.id) + unit_volume * body.qty
+    if volume_after_intake > _storage_capacity(pvz):
+        raise HTTPException(409, detail={
+            "error": "no_volume_capacity",
+            "free_volume_m3": round(max(_storage_capacity(pvz) - _occupied_volume(db, pvz.id), 0), 3),
+            "incoming_volume_m3": round(unit_volume * body.qty, 3),
+        })
+
     now = utcnow()
     ttl = body.ttl_days or 7
     ttl = max(TTL_MIN, min(TTL_MAX, ttl))
@@ -370,7 +392,6 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
         db, make_intake_accrual(pvz_id=pvz_id, qty=body.qty, stock_item_id=item.id)
     )
     set_stock_status(db, item, "STORED")
-    from app.network import calculate_assortment
     calculate_assortment(db, pvz, sync_flags=True)
     db.commit()
     db.refresh(item)
