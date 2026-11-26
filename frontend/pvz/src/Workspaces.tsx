@@ -68,7 +68,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
 
   const load = async () => {
     try {
-      const result = await api.getNetworkMap();
+      const result: NetworkMap = await api.getNetworkMap();
       setMap(result);
       if (result.locations.length > 0) {
         const ids = result.locations.map((location) => location.id);
