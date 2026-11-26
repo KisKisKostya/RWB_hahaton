@@ -70,11 +70,14 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     try {
       const result = await api.getNetworkMap();
       setMap(result);
-      if (result.locations.length > 1) {
+      if (result.locations.length > 0) {
+        const ids = result.locations.map((location) => location.id);
         setEdgeForm((current) => ({
           ...current,
-          from_pvz_id: current.from_pvz_id || String(result.locations[0].id),
-          to_pvz_id: current.to_pvz_id || String(result.locations[1].id),
+          from_pvz_id: ids.includes(Number(current.from_pvz_id)) ? current.from_pvz_id : String(ids[0]),
+          to_pvz_id: ids.includes(Number(current.to_pvz_id)) && current.to_pvz_id !== current.from_pvz_id
+            ? current.to_pvz_id
+            : String(ids.find((id) => id !== Number(current.from_pvz_id)) || ids[0]),
         }));
       }
       setMapCity((current) => result.locations.some((location) => location.city === current) ? current : result.locations[0]?.city || 'Казань');
@@ -387,6 +390,12 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
   const locName = (id: number) => pvzList.find((node) => node.id === id)?.address || 'Пункт #' + id;
   const load = async () => { try { setRoutes(await api.listTruckRoutes()); } catch (error) { setMessage(jsonError(error)); } };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (pvzList.length > 0) {
+      setFromId((current) => current || String(pvzList[0].id));
+      setToId((current) => current || String(pvzList.find((node) => node.id !== Number(fromId))?.id || pvzList[0].id));
+    }
+  }, [pvzList, fromId]);
 
   const calculate = async () => {
     setBusy(true);
