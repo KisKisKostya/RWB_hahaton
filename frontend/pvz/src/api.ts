@@ -43,7 +43,7 @@ export const api = {
   createCustomerOrder: (data: unknown, customerId = 1) => request('/customer/orders?customer_id=' + customerId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getCustomerOrders: (id: number) => request('/customer/orders/' + id),
   confirmCustomerPickup: (orderId: number, customerId = 1) => request('/customer/orders/' + orderId + '/pickup?customer_id=' + customerId, { method: 'POST' }),
-  intake: (pvzId: number, data: { product_id: number; qty: number; top_flag?: boolean }) =>
+  intake: (pvzId: number, data: { product_id: number; qty: number }) =>
     request('/pvz/' + pvzId + '/intake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
