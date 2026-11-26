@@ -416,65 +416,12 @@ def list_products(db: Session = Depends(get_db)):
 
 @app.post("/pvz/{pvz_id}/intake", response_model=schemas.StockItemOut)
 def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
-    pvz = db.query(PVZ).filter(PVZ.id == pvz_id).first()
-    if not pvz:
-        raise HTTPException(404, "pvz not found")
-    product = db.query(Product).filter(Product.id == body.product_id).first()
-    if not product:
-        raise HTTPException(404, "product not found")
-
-    cap = capacity_snapshot(db, pvz, incoming=body.qty)
-    if not cap["capacity_ok"]:
-        raise HTTPException(409, detail={"error": "no_capacity", "capacity": cap})
-
-    from app.network import (
-        category_volume_limit,
-        _occupied_volume,
-        _storage_capacity,
-        _volume_m3,
-        calculate_assortment,
-        plan_rebalancing,
+    # Direct catalog intake is disabled: every PVZ receipt must complete a
+    # transfer that was explicitly assigned to this destination by a road route.
+    raise HTTPException(
+        409,
+        "Прямая приёмка из каталога отключена. Примите товар из действующего рейса в разделе «Приёмка товара».",
     )
-    unit_volume = _volume_m3(product)
-    if unit_volume > category_volume_limit(product):
-        raise HTTPException(409, detail={
-            "error": "oversized_for_pvz",
-            "volume_m3": round(unit_volume, 4),
-            "recommendation": "Передайте товар через кабинет продавца: Mesh направит его на хаб.",
-        })
-    volume_after_intake = _occupied_volume(db, pvz.id) + unit_volume * body.qty
-    if volume_after_intake > _storage_capacity(pvz):
-        raise HTTPException(409, detail={
-            "error": "no_volume_capacity",
-            "free_volume_m3": round(max(_storage_capacity(pvz) - _occupied_volume(db, pvz.id), 0), 3),
-            "incoming_volume_m3": round(unit_volume * body.qty, 3),
-        })
-
-    now = utcnow()
-    ttl = body.ttl_days or 7
-    ttl = max(TTL_MIN, min(TTL_MAX, ttl))
-    item = StockItem(
-        product_id=body.product_id,
-        pvz_id=pvz_id,
-        qty=body.qty,
-        status="ACCEPTED",
-        accepted_at=now,
-        ttl_days=ttl,
-        storage_deadline=now + timedelta(days=ttl),
-        top_flag=False,
-        last_top_check=None,
-    )
-    db.add(item)
-    db.flush()
-    persist_accrual(
-        db, make_intake_accrual(pvz_id=pvz_id, qty=body.qty, stock_item_id=item.id)
-    )
-    set_stock_status(db, item, "STORED")
-    calculate_assortment(db, pvz, sync_flags=True)
-    plan_rebalancing(db)
-    db.commit()
-    db.refresh(item)
-    return item
 
 
 @app.get("/pvz/{pvz_id}/stock", response_model=list[schemas.StockItemOut])

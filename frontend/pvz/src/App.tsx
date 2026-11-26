@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { CSSProperties, FormEvent, ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { api } from './api';
 import './App.css';
 import {
@@ -178,6 +178,7 @@ function App() {
   const [stock, setStock] = useState<StockItem[]>([]);
   const [accruals, setAccruals] = useState<Accrual[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [incomingTransfers, setIncomingTransfers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,9 +190,10 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [locations, prod] = await Promise.all([api.getPvz(), api.getProducts()]);
+      const [locations, prod, transfers] = await Promise.all([api.getPvz(), api.getProducts(), api.listTransfers()]);
       setPvzList(locations);
       setProducts(prod);
+      setIncomingTransfers(transfers);
 
       const activeLocation = locations.find((location: Pvz) => location.id === selectedPvzId) || locations[0] || null;
       if (!activeLocation) {
@@ -257,21 +259,21 @@ function App() {
   const now = new Date();
   const greeting = now.getHours() < 12 ? 'Доброе утро' : now.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
 
-  const handleIntake = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
+  const pendingIntakes = incomingTransfers.filter((transfer) =>
+    transfer.to_pvz_id === selectedPvzId &&
+    transfer.status === 'READY_ON_ROUTE' &&
+    transfer.route_id,
+  );
+
+  const handleIntake = async (transferId: number) => {
     setSubmitting(true);
+    setError(null);
     try {
-      await api.intake(selectedPvzId, {
-        product_id: Number(form.get('product_id')),
-        qty: Number(form.get('qty')),
-      });
-      formElement.reset();
+      await api.completeTransfer(transferId);
       await loadData();
       setTab('stock');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка приёмки товара');
+      setError(err instanceof Error ? err.message : 'Не удалось принять товар из рейса');
     } finally {
       setSubmitting(false);
     }
@@ -567,62 +569,44 @@ function App() {
             <section className="intake-layout">
               <article className="panel intake-form-panel">
                 <div className="panel-heading">
-                  <div><h2>Новая приёмка</h2><p>Заполните информацию о поступившем товаре</p></div>
-                  <div className="form-step">01 <span>/ 01</span></div>
+                  <div><h2>Приёмка из дорожного рейса</h2><p>Принимать можно только поставки, которые назначены на выбранный ПВЗ в действующем рейсе.</p></div>
+                  <div className="form-step">{pendingIntakes.length.toString().padStart(2, '0')} <span>поставок</span></div>
                 </div>
-                <form className="intake-form" onSubmit={handleIntake}>
-                  <label className="field-label" htmlFor="product_id">Товар <span>*</span></label>
-                  <div className="select-wrap">
-                    <select id="product_id" name="product_id" required defaultValue="">
-                      <option value="" disabled>Выберите товар из каталога</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>
-                      ))}
-                    </select>
-                    <Icon name="chevron" size={17} />
+                {pendingIntakes.length > 0 ? (
+                  <div className="activity-list">
+                    {pendingIntakes.map((transfer) => (
+                      <div className="activity-row" key={transfer.id}>
+                        <div className="activity-icon"><Icon name="box" size={18} /></div>
+                        <div className="activity-copy">
+                          <strong>{transfer.product_name}</strong>
+                          <span>{transfer.qty} шт. · Отправление: {transfer.from_label} · Рейс: {transfer.route_name || '#' + transfer.route_id}</span>
+                        </div>
+                        <button
+                          className="button button-primary"
+                          disabled={submitting}
+                          onClick={() => handleIntake(transfer.id)}
+                        >
+                          {submitting ? 'Принимаем…' : 'Подтвердить приёмку'}
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                  <div className="field-hint">Выберите позицию из каталога товаров продавцов.</div>
-
-                  <label className="field-label" htmlFor="qty">Количество <span>*</span></label>
-                  <div className="input-wrap">
-                    <input id="qty" name="qty" type="number" min="1" max="1000" placeholder="Например, 12" required />
-                    <span>шт.</span>
+                ) : (
+                  <div className="empty-state">
+                    Для выбранного ПВЗ нет товаров, ожидающих прибытия по действующему рейсу. Сначала создайте рейс и отправьте по нему товар в разделе «Маркетплейс → Дорожные рейсы».
                   </div>
-                  <div className="field-hint">Количество единиц товара в текущей поставке.</div>
-
-                  <div className="automatic-top-note">
-                    <Icon name="spark" size={18} />
-                    <div><strong>TOP рассчитывается автоматически</strong><span>Приоритет определяется недельным спросом, габаритами товара и свободным объёмом этого ПВЗ.</span></div>
-                  </div>
-
-                  <div className="form-summary">
-                    <div><span>Свободно сейчас</span><strong>{capacity?.free ?? '—'} шт.</strong></div>
-                    <div><span>Резерв ёмкости</span><strong>{capacity ? Math.round(capacity.capacity_units - capacity.usable_limit) : '—'} шт.</strong></div>
-                  </div>
-
-                  <div className="form-actions">
-                    <button type="button" className="button button-secondary" onClick={() => setTab('dash')}>Отмена</button>
-                    <button type="submit" className="button button-primary" disabled={submitting || products.length === 0}>
-                      {submitting ? 'Сохраняем…' : <><Icon name="plus" size={18} /> Принять товар</>}
-                    </button>
-                  </div>
-                </form>
+                )}
               </article>
-
               <aside className="intake-aside">
                 <article className="panel side-info-card">
                   <div className="side-info-icon"><Icon name="check" size={20} /></div>
-                  <h3>Перед приёмкой</h3>
-                  <p>Система автоматически проверит, достаточно ли свободного места на пункте выдачи.</p>
+                  <h3>Как проходит приёмка</h3>
                   <ul>
-                    <li><Icon name="check" size={15} /> Проверка доступной ёмкости</li>
-                    <li><Icon name="check" size={15} /> Расчёт срока хранения</li>
-                    <li><Icon name="check" size={15} /> Автоматическое начисление за приёмку</li>
+                    <li><Icon name="check" size={15} /> Товар заранее добавлен в рейс</li>
+                    <li><Icon name="check" size={15} /> ПВЗ назначения совпадает с текущим объектом</li>
+                    <li><Icon name="check" size={15} /> Количество берётся из отправки</li>
+                    <li><Icon name="check" size={15} /> После подтверждения товар поступает на хранение</li>
                   </ul>
-                </article>
-                <article className="tip-card">
-                  <div><Icon name="spark" size={19} /><strong>Совет</strong></div>
-                  <p>Помечайте товары с высоким спросом как TOP-позиции. Это помогает системе выбирать более быстрые локальные маршруты.</p>
                 </article>
               </aside>
             </section>
