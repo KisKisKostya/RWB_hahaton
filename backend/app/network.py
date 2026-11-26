@@ -730,6 +730,26 @@ def upload_weekly_demand(pvz_id: int, body: DemandBatch, db: Session = Depends(g
     }
 
 
+@router.get("/network/demand/{pvz_id}")
+def get_weekly_demand_history(pvz_id: int, db: Session = Depends(get_db)):
+    if not db.query(PVZ).filter(PVZ.id == pvz_id).first():
+        raise HTTPException(404, "ПВЗ не найден")
+    rows = db.query(WeeklyDemand).filter(
+        WeeklyDemand.pvz_id == pvz_id
+    ).order_by(WeeklyDemand.week_start.desc(), WeeklyDemand.product_id.asc()).all()
+    result = []
+    for row in rows:
+        product = db.query(Product).filter(Product.id == row.product_id).first()
+        result.append({
+            "week_start": row.week_start.date().isoformat(),
+            "product_id": row.product_id,
+            "product_name": product.name if product else f"Товар #{row.product_id}",
+            "sku": product.sku if product else None,
+            "quantity": row.quantity,
+        })
+    return result
+
+
 @router.get("/network/assortment/{pvz_id}")
 def get_assortment(pvz_id: int, db: Session = Depends(get_db)):
     pvz = db.query(PVZ).filter(PVZ.id == pvz_id).first()
@@ -844,6 +864,7 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     transfer.completed_at = utcnow()
     db.flush()
     calculate_assortment(db, target, sync_flags=True)
+    plan_rebalancing(db)
     db.commit()
     return {"id": transfer.id, "status": transfer.status, "from_pvz_id": source.id, "to_pvz_id": target.id}
 
@@ -1090,6 +1111,7 @@ def create_customer_order(body: CustomerOrderCreate, customer_id: int = Query(de
         status="READY",
     )
     db.add(order)
+    plan_rebalancing(db)
     db.commit()
     db.refresh(order)
     return {
