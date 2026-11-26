@@ -96,7 +96,7 @@ RWB_hahaton/
 │   │   ├── schemas.py       # Схемы API
 │   │   ├── routing.py       # Расчёты вариантов доставки
 │   │   ├── tariffs.py       # Демонстрационные тарифы
-│   │   └── seed.py          # Наполнение базы демонстрационными данными
+│   │   ├── seed.py          # Полный seed (очищает основные таблицы)\n│   │   └── seed_network_demo.py # Безопасное добавление ПВЗ, складов и рейсов
 │   ├── tests/               # Backend-тесты
 │   └── requirements.txt
 ├── frontend/
