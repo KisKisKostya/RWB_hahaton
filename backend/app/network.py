@@ -752,8 +752,7 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
 
 @router.get("/seller/{seller_id}/products")
 def seller_products(seller_id: int, db: Session = Depends(get_db)):
-    seller = db.query(Customer).filter(Customer.id == seller_id).first()
-    # Seller IDs are stored in the existing sellers table, not customer profiles.
+    # Seller IDs are stored in the existing sellers table.
     from app.models import Seller
     seller = db.query(Seller).filter(Seller.id == seller_id).first()
     if not seller:
