@@ -17,6 +17,8 @@ type Location = {
   occupied_volume_m3?: number;
 };
 
+type Seller = { id: number; name: string; commission_rate: number };
+
 type Product = {
   id: number;
   name: string;
@@ -408,6 +410,8 @@ export function TransfersWorkspace({ onRefresh }: WorkspaceProps) {
 }
 
 export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
+  const [sellers, setSellers] = useState<Seller[]>([]);
+  const [sellerId, setSellerId] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState('');
   const [qty, setQty] = useState('10');
@@ -416,7 +420,17 @@ export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [result, setResult] = useState<any>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.getProducts().then(setProducts).catch((error) => setMessage(jsonError(error))); }, []);
+  useEffect(() => {
+    api.getSellers().then((items) => {
+      setSellers(items);
+      if (items[0]) setSellerId(String(items[0].id));
+    }).catch((error) => setMessage(jsonError(error)));
+  }, []);
+  useEffect(() => {
+    if (!sellerId) return;
+    setProductId('');
+    api.getSellerProducts(Number(sellerId)).then(setProducts).catch((error) => setMessage(jsonError(error)));
+  }, [sellerId]);
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setResult(null);
     try {
@@ -438,6 +452,7 @@ export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     <div className="seller-workspace-grid">
       <Panel title="Передать товар в сеть" subtitle="Не нужно самостоятельно выбирать склад назначения">
         <form className="workspace-form" onSubmit={submit}>
+          <label>Профиль продавца<select value={sellerId} onChange={(e) => setSellerId(e.target.value)} required><option value="">Выберите продавца</option>{sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name} · #{seller.id}</option>)}</select></label>
           <label>Товар<select value={productId} onChange={(e) => {
             const value = e.target.value;
             const selected = products.find((item) => item.id === Number(value));
