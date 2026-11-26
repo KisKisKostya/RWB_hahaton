@@ -338,15 +338,30 @@ def seed(reset: bool = False) -> None:
             )
         )
 
-        # remaining products at hub
+        # remaining products at Moscow hub
         for prod in products[18:]:
             stock_rows.append(
                 StockItem(
                     product_id=prod.id,
-                    pvz_id=hub.id,
+                    pvz_id=moscow_hub.id,
                     qty=10,
                     status="STORED",
                     accepted_at=now - timedelta(days=1),
+                    ttl_days=14,
+                    storage_deadline=now + timedelta(days=14),
+                    top_flag=False,
+                )
+            )
+
+        # A separate assortment at Kazan hub makes both warehouse cards meaningful.
+        for prod in products[20:28]:
+            stock_rows.append(
+                StockItem(
+                    product_id=prod.id,
+                    pvz_id=kazan_hub.id,
+                    qty=8,
+                    status="STORED",
+                    accepted_at=now - timedelta(days=2),
                     ttl_days=14,
                     storage_deadline=now + timedelta(days=14),
                     top_flag=False,
