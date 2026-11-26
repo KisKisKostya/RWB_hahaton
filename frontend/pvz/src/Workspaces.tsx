@@ -235,7 +235,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         <div className="network-map-tiles" aria-hidden="true">
           {tileData.map((tile) => <img key={tile.key} src={tile.url} alt="" draggable={false} style={{ left: tile.left, top: tile.top }} />)}
         </div>
-        <svg viewBox="0 0 900 370" role="img" aria-label={'Карта пунктов выдачи и складов города ' + mapCity} onClick={pickCoordinates}>
+        <svg viewBox="0 0 900 370" preserveAspectRatio="none" role="img" aria-label={'Карта пунктов выдачи и складов города ' + mapCity} onClick={pickCoordinates}>
           {map.edges.map((edge) => {
             const from = cityLocations.find((node) => node.id === edge.from_pvz_id);
             const to = cityLocations.find((node) => node.id === edge.to_pvz_id);
