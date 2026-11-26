@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models import (
+    Accrual,
+    CapacityReservation,
     Customer,
     InventoryTransfer,
     Order,
@@ -29,7 +31,7 @@ router = APIRouter(tags=["network", "demand", "customer"])
 
 AVAILABLE_STOCK = ("ACCEPTED", "STORED")
 ACTIVE_STOCK = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED")
-OCCUPIED_STOCK = (*ACTIVE_STOCK, "IN_TRANSFER")
+OCCUPIED_STOCK = (*ACTIVE_STOCK, "IN_TRANSFER", "RETURNED", "DAMAGED")
 TRANSFER_PENDING = ("WAITING_ROUTE", "READY_ON_ROUTE")
 MAX_PVZ_ITEM_VOLUME_M3 = 0.08
 CATEGORY_MAX_VOLUME_M3 = {
@@ -370,7 +372,7 @@ def _create_transfer(
     available_rows = db.query(StockItem).filter(
         StockItem.product_id == product_id,
         StockItem.pvz_id == from_id,
-        StockItem.status == "STORED",
+        StockItem.status.in_(("STORED", "RETURNED")),
         StockItem.qty > 0,
     ).order_by(StockItem.accepted_at).all()
     if sum(row.qty for row in available_rows) < qty:
@@ -1140,6 +1142,9 @@ def create_customer_order(body: CustomerOrderCreate, customer_id: int = Query(de
         status="READY",
     )
     db.add(order)
+    db.flush()
+    reserved_stock.order_id = order.id
+    order.reserved_stock_item_id = reserved_stock.id
     plan_rebalancing(db)
     db.commit()
     db.refresh(order)
@@ -1178,7 +1183,28 @@ def confirm_customer_pickup(
     order.status = "ISSUED"
     location = db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
     if location:
+        from app.models import Accrual
+        from app.tariffs import storage_fee as calc_storage_fee
+
+        days = max((utcnow() - reserved_stock.accepted_at).total_seconds() / 86400, 0)
+        storage_amount = calc_storage_fee(days, order.qty, location.storage_rate_day)
+        for accrual_type, amount in (
+            ("issue_intake", location.intake_fee * order.qty),
+            ("assembly", location.assembly_fee),
+            ("storage_fee", storage_amount),
+            ("local_bonus", location.local_bonus),
+        ):
+            db.add(Accrual(
+                pvz_id=location.id,
+                order_id=order.id,
+                stock_item_id=reserved_stock.id,
+                type=accrual_type,
+                amount=round(amount, 2),
+            ))
         calculate_assortment(db, location, sync_flags=True)
+    db.query(CapacityReservation).filter(
+        CapacityReservation.source.like(f"order:{order.id}%")
+    ).delete(synchronize_session=False)
     plan_rebalancing(db)
     db.commit()
     return {"order_id": order.id, "status": order.status, "message": "Получение заказа подтверждено"}
