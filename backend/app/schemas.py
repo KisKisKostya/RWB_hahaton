@@ -29,6 +29,11 @@ class PVZOut(BaseModel):
     assembly_fee: float
     local_bonus: float
     is_hub: bool
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    is_mesh_enabled: bool = True
+    storage_area_m2: float = 20.0
+    storage_height_m: float = 2.0
 
 
 class CapacityOut(BaseModel):
@@ -52,6 +57,9 @@ class ProductOut(BaseModel):
     name: str
     price: float
     category: str
+    length_cm: float = 10.0
+    width_cm: float = 10.0
+    height_cm: float = 10.0
 
 
 # --- Stock ---
