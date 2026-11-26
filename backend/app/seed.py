@@ -303,13 +303,19 @@ def seed() -> None:
         db.flush()
         kazan_route = TruckRoute(name="Казань · городской контур", is_active=True)
         moscow_route = TruckRoute(name="Москва · ПВЗ — склад", is_active=True)
-        long_route = TruckRoute(name="Межрегиональный рейс", is_active=True)
-        db.add_all([kazan_route, moscow_route, long_route])
+        kazan_outbound = TruckRoute(name="Казань → хаб", is_active=True)
+        kazan_inbound = TruckRoute(name="Хаб → Казань", is_active=True)
+        moscow_inbound = TruckRoute(name="Хаб → Москва", is_active=True)
+        moscow_outbound = TruckRoute(name="Москва → хаб", is_active=True)
+        db.add_all([kazan_route, moscow_route, kazan_outbound, kazan_inbound, moscow_inbound, moscow_outbound])
         db.flush()
         for route, stops in (
             (kazan_route, [1, 2, 3]),
             (moscow_route, [4, 5, 6]),
-            (long_route, [6, 3, 1, 2]),
+            (kazan_outbound, [1, 2, 3, 6]),
+            (kazan_inbound, [6, 3, 1, 2]),
+            (moscow_inbound, [6, 5, 4]),
+            (moscow_outbound, [4, 5, 6]),
         ):
             for order_no, location_id in enumerate(stops):
                 db.add(TruckRouteStop(route_id=route.id, pvz_id=location_id, sequence_no=order_no))
