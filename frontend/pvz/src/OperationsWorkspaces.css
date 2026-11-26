@@ -1,0 +1,73 @@
+.ops-stack { display:flex; flex-direction:column; gap:16px; }
+.ops-intro { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:6px 2px 3px; }
+.ops-intro > div:first-child { max-width:790px; }
+.ops-intro > div:first-child > span { display:block; color:#aa278b; font-size:9px; font-weight:800; letter-spacing:1px; margin-bottom:8px; }
+.ops-intro h1 { margin:0; color:#263047; font-size:25px; letter-spacing:-.7px; }
+.ops-intro p { margin:8px 0 0; color:#8c96a7; font-size:10px; line-height:1.65; }
+.ops-kpi { display:flex; flex-direction:column; align-items:flex-end; gap:3px; min-width:130px; }
+.ops-kpi strong { color:#b31389; font-size:28px; }
+.ops-kpi span,.ops-finance-scope { color:#8d97a7; font-size:10px; }
+.ops-finance-scope { border:1px solid #edf0f5; background:#fff; border-radius:9px; padding:12px 14px; }
+.ops-finance-scope strong { color:#414b61; }
+.ops-two-col { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:15px; align-items:start; }
+.ops-panel { min-width:0; border:1px solid #edf0f5; border-radius:12px; background:#fff; padding:17px; box-shadow:0 3px 14px #26304708; }
+.ops-panel > header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.ops-panel > header h2 { margin:0; color:#424b60; font-size:13px; font-weight:780; }
+.ops-panel > header p { margin:5px 0 0; color:#9ba3b2; font-size:9px; line-height:1.55; }
+.ops-form { display:flex; flex-direction:column; gap:12px; }
+.ops-form label,.ops-filter-row label { display:flex; flex-direction:column; gap:6px; color:#586277; font-size:10px; font-weight:700; }
+.ops-form input,.ops-form select,.ops-form textarea,.ops-filter-row select { width:100%; min-width:0; border:1px solid #e7eaf0; border-radius:8px; padding:10px 11px; outline:0; background:#fff; color:#424b60; font:inherit; font-weight:450; resize:vertical; }
+.ops-form input:focus,.ops-form select:focus,.ops-form textarea:focus,.ops-filter-row select:focus { border-color:#d58abe; box-shadow:0 0 0 3px #b3138910; }
+.ops-hint { color:#9aa3b2; font-size:9px; line-height:1.6; margin:4px 0 0; }
+.ops-rules { display:flex; flex-direction:column; gap:14px; }
+.ops-rules > div { display:grid; grid-template-columns:25px 1fr; column-gap:10px; align-items:start; }
+.ops-rules > div > b { grid-row:span 2; width:25px; height:25px; display:grid; place-items:center; border-radius:8px; background:#faedf6; color:#a51b81; font-size:9px; }
+.ops-rules strong { color:#485267; font-size:10px; }
+.ops-rules p { margin:5px 0 0; color:#939cad; font-size:9px; line-height:1.55; }
+.ops-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.workspace-button.danger { color:#a43a45; border:1px solid #f1d8da; background:#fff6f6; }
+.ops-table-wrap { width:100%; overflow-x:auto; }
+.ops-table { width:100%; border-collapse:collapse; text-align:left; white-space:nowrap; }
+.ops-table th { padding:10px 9px; color:#9aa3b2; font-size:8px; font-weight:750; text-transform:uppercase; letter-spacing:.5px; background:#fafbfc; }
+.ops-table td { padding:11px 9px; border-top:1px solid #f0f2f6; color:#566075; font-size:9px; }
+.ops-table td small { color:#9aa3b2; }
+.ops-empty { padding:23px!important; text-align:center; color:#9ca4b2!important; white-space:normal!important; }
+.ops-status { display:inline-flex; align-items:center; border-radius:30px; padding:5px 8px; font-size:8px; font-weight:750; background:#fff5e8; color:#ad752f; }
+.ops-status.success { background:#eaf7f2; color:#168c6b; }
+.ops-status.warning { background:#fff5e8; color:#ad752f; }
+.ops-incident-list { display:flex; flex-direction:column; gap:10px; }
+.ops-incident { border:1px solid #edf0f5; border-radius:9px; padding:13px; }
+.ops-incident-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.ops-incident-head > div { display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
+.ops-incident-head strong { color:#455066; font-size:10px; }
+.ops-incident p { margin:10px 0 6px; color:#677287; font-size:9px; line-height:1.6; }
+.ops-incident > small { display:block; color:#a0a8b5; font-size:8px; margin-top:4px; }
+.ops-incident .ops-actions { margin-top:10px; }
+.ops-severity { display:inline-flex; border-radius:20px; padding:4px 7px; font-size:8px; font-weight:750; }
+.ops-severity.high { color:#a53e49; background:#fff0f1; }
+.ops-severity.warning { color:#ad752f; background:#fff5e8; }
+.ops-message { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 13px; border:1px solid #dfeee7; border-radius:9px; background:#f7fcf9; color:#3e725b; font-size:10px; }
+.ops-message button { border:0; background:transparent; color:inherit; font-size:18px; cursor:pointer; }
+.ops-finance-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.ops-finance-card { min-width:0; display:flex; flex-direction:column; gap:8px; padding:14px; border:1px solid #edf0f5; border-radius:10px; background:#fff; }
+.ops-finance-card > span { color:#8e98a8; font-size:9px; }
+.ops-finance-card strong { color:#354057; font-size:17px; font-weight:800; overflow-wrap:anywhere; }
+.ops-finance-card strong.negative,.ops-table td.negative { color:#b24c59; }
+.ops-finance-details { display:flex; flex-direction:column; margin:0; }
+.ops-finance-details > div { display:flex; justify-content:space-between; gap:12px; padding:10px 0; border-bottom:1px solid #f0f2f6; }
+.ops-finance-details > div:last-child { border-bottom:0; }
+.ops-finance-details dt { color:#8993a4; font-size:9px; }
+.ops-finance-details dd { margin:0; color:#465168; font-size:10px; font-weight:750; text-align:right; }
+.ops-filter-row { margin-bottom:12px; }
+.ops-filter-row label { max-width:360px; }
+@media(max-width:1000px) { .ops-finance-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:700px) {
+  .ops-two-col { grid-template-columns:1fr; }
+  .ops-intro { align-items:flex-start; flex-direction:column; }
+  .ops-intro h1 { font-size:22px; }
+  .ops-kpi { align-items:flex-start; }
+  .ops-finance-grid { grid-template-columns:1fr 1fr; }
+  .ops-finance-card { padding:11px; }
+  .ops-finance-card strong { font-size:14px; }
+  .ops-panel { padding:14px; }
+}
