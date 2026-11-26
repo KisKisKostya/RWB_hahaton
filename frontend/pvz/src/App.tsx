@@ -167,7 +167,6 @@ function App() {
   const [stock, setStock] = useState<StockItem[]>([]);
   const [accruals, setAccruals] = useState<Accrual[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [pvz, setPvz] = useState<Pvz | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +184,6 @@ function App() {
 
       const activeLocation = locations.find((location: Pvz) => location.id === selectedPvzId) || locations[0] || null;
       if (!activeLocation) {
-        setPvz(null);
         setCapacity(null);
         setStock([]);
         setAccruals([]);
@@ -204,7 +202,6 @@ function App() {
       setCapacity(cap);
       setStock(st);
       setAccruals(acc);
-      setPvz(activeLocation);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Не удалось загрузить данные');
     } finally {
