@@ -27,6 +27,7 @@ from app.models import (
 from app.accruals import make_accrual, make_intake_accrual
 from app.lifecycle import transition_order, transition_stock
 from app.routing import build_hub, build_local
+from app.network import router as network_router
 from app.tariffs import (
     ASSEMBLY_FEE,
     COMMISSION_RATE,
@@ -789,3 +790,7 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
     if not order:
         raise HTTPException(404, "order not found")
     return order
+
+
+# New operator, seller and customer workflows.
+app.include_router(network_router)
