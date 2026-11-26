@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from app.capacity import capacity_ok
 from app.tariffs import (
+    COMMISSION_RATE,
     hub_cost as calc_hub_cost,
     local_cost as calc_local_cost,
     marketplace_margin,
@@ -26,13 +27,14 @@ def build_hub(
     storage_fee: float = 0.0,
     source_pvz_id: Optional[int] = None,
     hub_available: bool = True,
+    commission_rate: float = COMMISSION_RATE,
 ) -> dict[str, Any]:
     """Собрать hub RouteOption. reject_reason заполняется всегда при infeasible."""
     cost = calc_hub_cost(dist)
     income = pvz_income_hub(qty, storage_fee)
     total_price = price * qty
-    margin = marketplace_margin(total_price, cost, income)
-    payout = seller_payout(total_price, storage_fee)
+    margin = marketplace_margin(total_price, cost, income, commission_rate)
+    payout = seller_payout(total_price, storage_fee, commission_rate)
 
     feasible = True
     reject_reason: Optional[str] = None
@@ -71,6 +73,7 @@ def build_local(
     hub_marketplace_cost: float,
     source_pvz_id: Optional[int] = None,
     has_stock: bool = True,
+    commission_rate: float = COMMISSION_RATE,
 ) -> dict[str, Any]:
     """
     Собрать local RouteOption.
@@ -84,8 +87,8 @@ def build_local(
     cost = calc_local_cost(dist)
     income = pvz_income_local(qty, storage_fee)
     total_price = price * qty
-    margin = marketplace_margin(total_price, cost, income)
-    payout = seller_payout(total_price, storage_fee)
+    margin = marketplace_margin(total_price, cost, income, commission_rate)
+    payout = seller_payout(total_price, storage_fee, commission_rate)
     mkt_cost = marketplace_cost(cost, income)
 
     feasible = True

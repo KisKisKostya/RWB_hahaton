@@ -92,6 +92,7 @@ class StockItem(Base):
     top_flag = Column(Boolean, nullable=False, default=False)
     last_top_check = Column(DateTime, nullable=True)
     transfer_id = Column(Integer, ForeignKey("inventory_transfers.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True, index=True)
 
     product = relationship("Product", back_populates="stock_items")
     pvz = relationship("PVZ", back_populates="stock_items")
@@ -167,6 +168,9 @@ class Return(Base):
     reason = Column(String, nullable=False)
     condition = Column(String, nullable=False)  # intact | damaged
     decision = Column(String, nullable=False)  # keep | relocate | to_seller
+    stock_item_id = Column(Integer, ForeignKey("stock_items.id"), nullable=True)
+    refund_amount = Column(Float, nullable=False, default=0.0)
+    status = Column(String, nullable=False, default="PROCESSED")
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
     order = relationship("Order", back_populates="returns")
@@ -253,6 +257,23 @@ class InventoryTransfer(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+class InventoryIncident(Base):
+    __tablename__ = "inventory_incidents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    incident_type = Column(String, nullable=False)
+    severity = Column(String, nullable=False, default="warning")
+    status = Column(String, nullable=False, default="OPEN")
+    message = Column(Text, nullable=False)
+    resolution_note = Column(Text, nullable=True)
+    pvz_id = Column(Integer, ForeignKey("pvz.id"), nullable=True)
+    transfer_id = Column(Integer, ForeignKey("inventory_transfers.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+    stock_item_id = Column(Integer, ForeignKey("stock_items.id"), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     # Lightweight SQLite migrations keep existing hackathon demo databases usable.
@@ -271,10 +292,16 @@ def init_db() -> None:
         },
         "stock_items": {
             "transfer_id": "INTEGER REFERENCES inventory_transfers(id)",
+            "order_id": "INTEGER REFERENCES orders(id)",
         },
         "orders": {
             "customer_id": "INTEGER REFERENCES customers(id)",
             "reserved_stock_item_id": "INTEGER REFERENCES stock_items(id)",
+        },
+        "returns": {
+            "stock_item_id": "INTEGER REFERENCES stock_items(id)",
+            "refund_amount": "FLOAT NOT NULL DEFAULT 0.0",
+            "status": "VARCHAR NOT NULL DEFAULT 'PROCESSED'",
         },
     }
     from sqlalchemy import inspect, text

@@ -31,6 +31,7 @@ export const api = {
   shortestPath: (fromId: number, toId: number) => request('/network/shortest-path?from_pvz_id=' + fromId + '&to_pvz_id=' + toId),
   listTruckRoutes: () => request('/network/routes'),
   createTruckRoute: (data: unknown) => request('/network/routes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  setTruckRouteActive: (id: number, active: boolean) => request('/network/routes/' + id + '/active?active=' + active, { method: 'PATCH' }),
   getDemandHistory: (pvzId: number) => request('/network/demand/' + pvzId),
   uploadDemand: (pvzId: number, data: unknown) => request('/network/demand/' + pvzId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getAssortment: (pvzId: number) => request('/network/assortment/' + pvzId),
@@ -42,6 +43,22 @@ export const api = {
   updateCustomerProfile: (id: number, data: unknown) => request('/customer/profile/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   customerAvailability: (productId: number, pvzId: number, radiusKm: number) => request('/customer/availability?product_id=' + productId + '&pvz_id=' + pvzId + '&radius_km=' + radiusKm),
   createCustomerOrder: (data: unknown, customerId = 1) => request('/customer/orders?customer_id=' + customerId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  getOrders: () => request('/orders'),
+  createReturn: (orderId: number, data: { reason: string; condition: 'intact' | 'damaged' }) =>
+    request('/orders/' + orderId + '/return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  getReturns: () => request('/returns'),
+  getIncidents: () => request('/ops/incidents'),
+  runStockMaintenance: () => request('/ops/stock/maintenance', { method: 'POST' }),
+  reportTransferFailure: (id: number, message: string) =>
+    request('/network/transfers/' + id + '/report-failure?message=' + encodeURIComponent(message), { method: 'POST' }),
+  retryTransfer: (id: number) => request('/network/transfers/' + id + '/retry', { method: 'POST' }),
+  resolveIncident: (id: number, data: { resolution_note: string; mark_sent_to_seller?: boolean }) =>
+    request('/ops/incidents/' + id + '/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  cancelOrder: (id: number) => request('/orders/' + id + '/cancel', { method: 'POST' }),
+  failOrder: (id: number, message: string) =>
+    request('/orders/' + id + '/fail?message=' + encodeURIComponent(message), { method: 'POST' }),
+  getFinanceSummary: (pvzId?: number) => request('/finance/summary' + (pvzId ? '?pvz_id=' + pvzId : '')),
+  getFinanceSellerPayouts: () => request('/finance/seller-payouts'),
   getCustomerOrders: (id: number) => request('/customer/orders/' + id),
   confirmCustomerPickup: (orderId: number, customerId = 1) => request('/customer/orders/' + orderId + '/pickup?customer_id=' + customerId, { method: 'POST' }),
   intake: (pvzId: number, data: { product_id: number; qty: number }) =>

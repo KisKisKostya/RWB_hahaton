@@ -441,6 +441,16 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
     finally { setBusy(false); }
   };
 
+  const toggleRoute = async (route: any) => {
+    setBusy(true);
+    try {
+      await api.setTruckRouteActive(route.id, !route.is_active);
+      setMessage(route.is_active ? 'Рейс остановлен. Все связанные перемещения перепроверены.' : 'Рейс снова активен. Очередь перемещений перепроверена.');
+      await load();
+    } catch (error) { setMessage(jsonError(error)); }
+    finally { setBusy(false); }
+  };
+
   return <div className="workspace-stack">
     <Message value={message} onClose={() => setMessage('')} />
     <div className="workspace-intro"><div><span className="workspace-kicker">ОПЕРАТОР · ЛОГИСТИКА</span><h1>Дорожная сеть и рейсы</h1><p>Задавайте последовательность остановок грузовиков и используйте кратчайшие дороги для расчёта расстояния.</p></div></div>
@@ -466,7 +476,7 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
     </div>
     <Panel title="Действующие маршруты" subtitle="Перемещения назначаются в рейс только при соблюдении порядка остановок">
       <div className="route-list">
-        {routes.map((route) => <div className="route-list-row" key={route.id}><span className="route-icon">↗</span><div><strong>{route.name}</strong><small>{route.stop_pvz_ids.map((id: number) => '#' + id + ' ' + locName(id)).join(' → ')}</small></div><div className="assortment-metric"><strong>{route.distance_km ?? '—'} км</strong><small>по дорогам</small></div><span className={route.is_active ? 'route-active' : 'route-inactive'}>{route.is_active ? 'Активен' : 'Остановлен'}</span></div>)}
+        {routes.map((route) => <div className="route-list-row" key={route.id}><span className="route-icon">↗</span><div><strong>{route.name}</strong><small>{route.stop_pvz_ids.map((id: number) => '#' + id + ' ' + locName(id)).join(' → ')}</small></div><div className="assortment-metric"><strong>{route.distance_km ?? '—'} км</strong><small>по дорогам</small></div><span className={route.is_active ? 'route-active' : 'route-inactive'}>{route.is_active ? 'Активен' : 'Остановлен'}</span><button className="workspace-button small" disabled={busy} onClick={() => toggleRoute(route)}>{route.is_active ? 'Остановить' : 'Включить'}</button></div>)}
         {!routes.length && <div className="workspace-empty">Маршруты ещё не добавлены.</div>}
       </div>
     </Panel>

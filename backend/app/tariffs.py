@@ -43,14 +43,14 @@ def pvz_income_hub(qty: int, stor: float) -> float:
     return INTAKE_FEE * qty + stor + ASSEMBLY_FEE
 
 
-def marketplace_margin(price: float, route_cost: float, pvz_income: float) -> float:
-    """COMMISSION_RATE*price - route_cost - pvz_income"""
-    return COMMISSION_RATE * price - route_cost - pvz_income
+def marketplace_margin(price: float, route_cost: float, pvz_income: float, commission_rate: float = COMMISSION_RATE) -> float:
+    """commission_rate*price - route_cost - pvz_income"""
+    return commission_rate * price - route_cost - pvz_income
 
 
-def seller_payout(price: float, stor: float) -> float:
-    """price - COMMISSION_RATE*price - storage_fee"""
-    return price - COMMISSION_RATE * price - stor
+def seller_payout(price: float, stor: float, commission_rate: float = COMMISSION_RATE) -> float:
+    """price - commission_rate*price - storage_fee"""
+    return price - commission_rate * price - stor
 
 
 def ttl_days(avg_interval: float) -> int:

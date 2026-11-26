@@ -6,8 +6,9 @@ import {
   CustomerWorkspace, DemandWorkspace, NetworkWorkspace, RoutesWorkspace,
   SellerWorkspace, TransfersWorkspace,
 } from './Workspaces';
+import { FinanceWorkspace, IncidentsWorkspace, ReturnsWorkspace } from './OperationsWorkspaces';
 
-type Tab = 'dash' | 'intake' | 'stock' | 'accruals' | 'network' | 'demand' | 'routes' | 'transfers' | 'seller' | 'customer';
+type Tab = 'dash' | 'intake' | 'stock' | 'accruals' | 'network' | 'demand' | 'routes' | 'transfers' | 'returns' | 'incidents' | 'finance' | 'seller' | 'customer';
 
 type Capacity = {
   pvz_id: number;
@@ -98,6 +99,10 @@ const accrualNames: Record<string, string> = {
   assembly: 'Сборка заказа',
   issue_intake: 'Выдача заказа',
   pvz_income: 'Доход ПВЗ',
+  local_bonus: 'Бонус за локальную выдачу',
+  return_refund: 'Возврат покупателю',
+  'status:ASSEMBLED': 'Сборка товара',
+  'status:ISSUED': 'Выдача товара',
   relocation: 'Перемещение',
 };
 
@@ -151,6 +156,9 @@ const navGroups: { label: string; items: { id: Tab; label: string; icon: string 
     { id: 'demand', label: 'Спрос и TOP-5', icon: 'trend' },
     { id: 'routes', label: 'Дорожные рейсы', icon: 'arrow' },
     { id: 'transfers', label: 'Перемещения', icon: 'refresh' },
+    { id: 'returns', label: 'Возвраты', icon: 'arrow' },
+    { id: 'incidents', label: 'Сбои и инциденты', icon: 'alert' },
+    { id: 'finance', label: 'Финансовая модель', icon: 'wallet' },
   ]},
   { label: 'ПРОДАВЕЦ', items: [
     { id: 'seller', label: 'Поставки в Mesh', icon: 'box' },
@@ -242,7 +250,7 @@ function App() {
     return matchesSearch && matchesFilter;
   });
 
-  const isWorkspaceTab = ['network', 'demand', 'routes', 'transfers', 'seller', 'customer'].includes(tab);
+  const isWorkspaceTab = ['network', 'demand', 'routes', 'transfers', 'returns', 'incidents', 'finance', 'seller', 'customer'].includes(tab);
   const currentTitle = navGroups.flatMap((group) => group.items).find((item) => item.id === tab)?.label || 'Обзор';
   const now = new Date();
   const greeting = now.getHours() < 12 ? 'Доброе утро' : now.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
@@ -669,7 +677,7 @@ function App() {
                           <td><div className="accrual-name"><div className="activity-icon"><Icon name="wallet" size={16} /></div><strong>{accrualNames[item.type] || item.type}</strong></div></td>
                           <td>{dateTimeFormat(item.created_at)}</td>
                           <td><span className="muted">{item.order_id ? 'Заказ #' + item.order_id : item.stock_item_id ? 'Товар #' + item.stock_item_id : '—'}</span></td>
-                          <td><strong className="positive-amount">+{money(item.amount)}</strong></td>
+                          <td><strong className={item.amount < 0 ? 'negative-amount' : 'positive-amount'}>{item.amount > 0 ? '+' : ''}{money(item.amount)}</strong></td>
                         </tr>
                       ))}
                       {recentAccruals.length === 0 && <tr><td colSpan={4} className="empty-state">Начислений пока нет</td></tr>}
@@ -686,6 +694,9 @@ function App() {
           {tab === 'transfers' && <TransfersWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
           {tab === 'seller' && <SellerWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
           {tab === 'customer' && <CustomerWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'returns' && <ReturnsWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'incidents' && <IncidentsWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} onRefresh={loadData} />}
+          {tab === 'finance' && <FinanceWorkspace selectedPvzId={selectedPvzId} pvzList={pvzList} />}
 
           <footer className="page-footer"><span>mesh. · Кабинет пункта выдачи</span><span>Данные обновляются при синхронизации <i /></span></footer>
         </div>

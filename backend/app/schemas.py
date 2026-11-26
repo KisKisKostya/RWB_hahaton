@@ -145,6 +145,9 @@ class ReturnOut(BaseModel):
     reason: str
     condition: str
     decision: str
+    stock_item_id: Optional[int] = None
+    refund_amount: float = 0.0
+    status: str = "PROCESSED"
     created_at: datetime
 
 
