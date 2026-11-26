@@ -13,6 +13,7 @@ from app.models import (
     Accrual,
     CapacityReservation,
     Customer,
+    InventoryIncident,
     InventoryTransfer,
     Order,
     Product,
@@ -151,6 +152,19 @@ def _volume_m3(product: Product) -> float:
     )
 
 
+def _occupied_units(db: Session, pvz_id: int) -> int:
+    rows = db.query(StockItem).filter(
+        StockItem.pvz_id == pvz_id,
+        StockItem.status.in_(OCCUPIED_STOCK),
+    ).all()
+    return sum(row.qty for row in rows)
+
+
+def _free_units(db: Session, pvz: PVZ) -> int:
+    limit = int(float(pvz.capacity_units or 0) * (1 - float(pvz.reserve_pct or 0)))
+    return max(limit - _occupied_units(db, pvz.id), 0)
+
+
 def _occupied_volume(db: Session, pvz_id: int) -> float:
     rows = (
         db.query(StockItem, Product)
@@ -274,7 +288,7 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
         ).all()
         current_qty = sum(item.qty for item in current_rows)
         remaining_need = max(target - current_qty, 0)
-        possible = math.floor(free / volume) if volume > 0 else 0
+        possible = min(math.floor(free / volume), _free_units(db, pvz)) if volume > 0 else 0
         max_category_volume = category_volume_limit(product)
         size_ok = volume <= max_category_volume
         if not size_ok:
@@ -313,11 +327,14 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
     selected = []
     reserved_volume = 0.0
     selected_ids = set()
+    reserved_units = 0
+    free_units = _free_units(db, pvz)
     for row in candidates:
         if len(selected) >= 5:
             break
         if not row["eligible_size"] or (row["current_qty"] <= 0 and row["allocatable_qty"] <= 0):
             continue
+        row["allocatable_qty"] = min(row["allocatable_qty"], max(free_units - reserved_units, 0))
         row_volume = row["allocatable_qty"] * row["volume_m3"]
         if reserved_volume + row_volume > free:
             row["allocatable_qty"] = max(0, math.floor((free - reserved_volume) / row["volume_m3"]))
@@ -326,6 +343,7 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
                 continue
             row_volume = row["allocatable_qty"] * row["volume_m3"]
         reserved_volume += row_volume
+        reserved_units += row["allocatable_qty"]
         row["rank"] = len(selected) + 1
         selected.append(row)
         selected_ids.add(row["product_id"])
@@ -541,9 +559,25 @@ def _refresh_waiting_transfers(db: Session) -> None:
         route_id, distance = _route_for_transfer(
             db, transfer.from_pvz_id, transfer.to_pvz_id
         )
+        was_ready = transfer.status == "READY_ON_ROUTE" and transfer.route_id is not None
         transfer.route_id = route_id
         transfer.distance_km = distance
         transfer.status = "READY_ON_ROUTE" if route_id else "WAITING_ROUTE"
+        if was_ready and not route_id:
+            existing = db.query(InventoryIncident).filter(
+                InventoryIncident.transfer_id == transfer.id,
+                InventoryIncident.incident_type == "ROUTE_UNAVAILABLE",
+                InventoryIncident.status == "OPEN",
+            ).first()
+            if not existing:
+                db.add(InventoryIncident(
+                    incident_type="ROUTE_UNAVAILABLE",
+                    severity="high",
+                    status="OPEN",
+                    message=f"Действующий маршрут для перемещения #{transfer.id} больше недоступен. Требуется переназначение.",
+                    pvz_id=transfer.from_pvz_id,
+                    transfer_id=transfer.id,
+                ))
 
 
 @router.get("/network/map")
@@ -870,8 +904,24 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     if total_available < transfer.qty:
         raise HTTPException(409, "На исходном ПВЗ больше нет нужного количества товара")
     added_volume = _volume_m3(product) * transfer.qty
-    if _occupied_volume(db, target.id) + added_volume > _storage_capacity(target):
-        raise HTTPException(409, "На целевом пункте недостаточно свободного объёма")
+    usable_units = int(float(target.capacity_units or 0) * (1 - float(target.reserve_pct or 0)))
+    if _occupied_volume(db, target.id) + added_volume > _storage_capacity(target) or _occupied_units(db, target.id) + transfer.qty > usable_units:
+        existing_incident = db.query(InventoryIncident).filter(
+            InventoryIncident.transfer_id == transfer.id,
+            InventoryIncident.incident_type == "TRANSFER_CAPACITY",
+            InventoryIncident.status == "OPEN",
+        ).first()
+        if not existing_incident:
+            db.add(InventoryIncident(
+                incident_type="TRANSFER_CAPACITY",
+                severity="high",
+                status="OPEN",
+                message=f"На точке назначения перемещения #{transfer.id} больше нет свободной вместимости. Товар оставлен в статусе «В грузовом рейсе».",
+                pvz_id=target.id,
+                transfer_id=transfer.id,
+            ))
+        db.commit()
+        raise HTTPException(409, "На целевом пункте недостаточно свободной вместимости; создан инцидент")
     remaining = transfer.qty
     for row in available_rows:
         taken = min(row.qty, remaining)
@@ -927,7 +977,7 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         if weekly <= 0 or volume > category_volume_limit(product):
             continue
         free = _storage_capacity(location) - _occupied_volume(db, location.id)
-        if volume * body.qty <= free:
+        if volume * body.qty <= free and body.qty <= _free_units(db, location):
             candidates.append((weekly, free, location))
 
     if candidates:
@@ -939,9 +989,9 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
             PVZ.is_mesh_enabled.is_(True),
         ).all()
         suitable_hubs = [
-            ( _storage_capacity(hub) - _occupied_volume(db, hub.id), hub)
+            (_storage_capacity(hub) - _occupied_volume(db, hub.id), hub)
             for hub in hubs
-            if volume * body.qty <= _storage_capacity(hub) - _occupied_volume(db, hub.id)
+            if volume * body.qty <= _storage_capacity(hub) - _occupied_volume(db, hub.id) and body.qty <= _free_units(db, hub)
         ]
         if not suitable_hubs:
             raise HTTPException(409, "Нет подключённого к Mesh склада с достаточным свободным объёмом")
@@ -953,6 +1003,8 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         raise HTTPException(404, "Пункт приёма продавца не найден")
     if not origin.is_mesh_enabled:
         raise HTTPException(409, "Пункт приёма исключён из Mesh-доставки. Выберите подключённый ПВЗ или склад.")
+    if body.qty > _free_units(db, origin) or _occupied_volume(db, origin.id) + volume * body.qty > _storage_capacity(origin):
+        raise HTTPException(409, "В пункте приёма продавца недостаточно свободной вместимости")
 
     source_item = StockItem(
         product_id=product.id,
@@ -966,6 +1018,12 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
     )
     db.add(source_item)
     db.flush()
+    db.add(Accrual(
+        pvz_id=origin.id,
+        stock_item_id=source_item.id,
+        type="intake",
+        amount=round(float(origin.intake_fee or 0) * body.qty, 2),
+    ))
     transfer = None
     if origin.id != destination.id:
         transfer = _create_transfer(
