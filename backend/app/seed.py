@@ -8,12 +8,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.models import (  # noqa: E402
+    Customer,
+    InventoryTransfer,
     Order,
     Product,
     PVZ,
     Seller,
     SessionLocal,
     StockItem,
+    RoadEdge,
+    TruckRoute,
+    TruckRouteStop,
+    WeeklyDemand,
     init_db,
     utcnow,
 )
@@ -48,11 +54,17 @@ PRODUCT_NAMES = [
 
 def clear(db) -> None:
     for table in (
+        "inventory_transfers",
+        "truck_route_stops",
+        "truck_routes",
+        "road_edges",
+        "weekly_demand",
         "accruals",
         "returns",
         "capacity_reservations",
         "route_options",
         "orders",
+        "customers",
         "stock_items",
         "products",
         "pvz",
@@ -85,6 +97,7 @@ def seed() -> None:
                 capacity_units=80,
                 reserve_pct=0.20,
                 peak_factor=1.1,
+                latitude=55.7903, longitude=49.1115, storage_area_m2=24, storage_height_m=2.2,
             ),
             PVZ(
                 city="Казань",
@@ -92,6 +105,7 @@ def seed() -> None:
                 capacity_units=60,
                 reserve_pct=0.20,
                 peak_factor=1.0,
+                latitude=55.7655, longitude=49.2202, storage_area_m2=20, storage_height_m=2.2,
             ),
             PVZ(
                 city="Казань",
@@ -99,6 +113,7 @@ def seed() -> None:
                 capacity_units=50,
                 reserve_pct=0.25,
                 peak_factor=1.2,
+                latitude=55.7815, longitude=49.1260, storage_area_m2=18, storage_height_m=2.0,
             ),
             PVZ(
                 city="Москва",
@@ -106,6 +121,7 @@ def seed() -> None:
                 capacity_units=100,
                 reserve_pct=0.20,
                 peak_factor=1.3,
+                latitude=55.7658, longitude=37.6052, storage_area_m2=35, storage_height_m=2.3,
             ),
             PVZ(
                 city="Москва",
@@ -113,6 +129,7 @@ def seed() -> None:
                 capacity_units=70,
                 reserve_pct=0.20,
                 peak_factor=1.1,
+                latitude=55.7495, longitude=37.5914, storage_area_m2=28, storage_height_m=2.2,
             ),
             PVZ(
                 city="Москва",
@@ -121,6 +138,8 @@ def seed() -> None:
                 reserve_pct=0.10,
                 peak_factor=1.0,
                 is_hub=True,
+                latitude=55.705, longitude=37.62, is_mesh_enabled=True,
+                storage_area_m2=1200, storage_height_m=8.0,
             ),
         ]
         db.add_all(pvz_list)
@@ -141,6 +160,9 @@ def seed() -> None:
                     name=name,
                     price=round(random.uniform(299, 7990), 2),
                     category=CATEGORIES[i % len(CATEGORIES)],
+                    length_cm=(65 if "Гантели" in name else 30 if CATEGORIES[i % len(CATEGORIES)] == "одежда" else 25 if CATEGORIES[i % len(CATEGORIES)] == "электроника" else 22 if CATEGORIES[i % len(CATEGORIES)] == "красота" else 35),
+                    width_cm=(45 if "Гантели" in name else 25 if CATEGORIES[i % len(CATEGORIES)] == "одежда" else 18 if CATEGORIES[i % len(CATEGORIES)] == "электроника" else 12 if CATEGORIES[i % len(CATEGORIES)] == "красота" else 25),
+                    height_cm=(35 if "Гантели" in name else 5 if CATEGORIES[i % len(CATEGORIES)] == "одежда" else 10 if CATEGORIES[i % len(CATEGORIES)] == "электроника" else 8 if CATEGORIES[i % len(CATEGORIES)] == "красота" else 20),
                 )
             )
         db.add_all(products)
@@ -247,6 +269,52 @@ def seed() -> None:
             )
 
         db.add_all(stock_rows)
+        db.flush()
+
+        # --- Weekly purchase history: batch demand by PVZ and product ---
+        week_start = now - timedelta(days=now.weekday() + 7)
+        for location in kazan:
+            for index, product in enumerate(products):
+                qty = max(0, 28 - index * 3) if product.id <= 8 else (8 if index % 3 == 0 else 2)
+                db.add(WeeklyDemand(pvz_id=location.id, product_id=product.id, week_start=week_start, quantity=qty))
+        for location in moscow:
+            for index, product in enumerate(products):
+                qty = max(0, 24 - (index - 8) * 4) if 8 <= product.id <= 12 else (6 if index % 4 == 0 else 1)
+                db.add(WeeklyDemand(pvz_id=location.id, product_id=product.id, week_start=week_start, quantity=qty))
+
+        # --- Road graph and active line-haul truck routes ---
+        roads = [
+            RoadEdge(from_pvz_id=1, to_pvz_id=2, distance_km=4.5),
+            RoadEdge(from_pvz_id=2, to_pvz_id=3, distance_km=6.2),
+            RoadEdge(from_pvz_id=1, to_pvz_id=3, distance_km=3.8),
+            RoadEdge(from_pvz_id=4, to_pvz_id=5, distance_km=4.2),
+            RoadEdge(from_pvz_id=4, to_pvz_id=6, distance_km=18.0),
+            RoadEdge(from_pvz_id=5, to_pvz_id=6, distance_km=20.0),
+            RoadEdge(from_pvz_id=3, to_pvz_id=6, distance_km=790.0),
+        ]
+        db.add_all(roads)
+        db.flush()
+        kazan_route = TruckRoute(name="Казань · городской контур", is_active=True)
+        moscow_route = TruckRoute(name="Москва · ПВЗ — склад", is_active=True)
+        long_route = TruckRoute(name="Межрегиональный рейс", is_active=True)
+        db.add_all([kazan_route, moscow_route, long_route])
+        db.flush()
+        for route, stops in (
+            (kazan_route, [1, 2, 3]),
+            (moscow_route, [4, 5, 6]),
+            (long_route, [6, 3, 1, 2]),
+        ):
+            for order_no, location_id in enumerate(stops):
+                db.add(TruckRouteStop(route_id=route.id, pvz_id=location_id, sequence_no=order_no))
+
+        default_customer = Customer(
+            name="Александр Покупатель",
+            phone="+7 900 000-00-00",
+            email="customer@example.com",
+            city="Казань",
+            preferred_pvz_id=kazan[0].id,
+        )
+        db.add(default_customer)
         db.flush()
 
         # --- Orders (30) ---
