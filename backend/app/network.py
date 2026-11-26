@@ -750,6 +750,17 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     return {"id": transfer.id, "status": transfer.status, "from_pvz_id": source.id, "to_pvz_id": target.id}
 
 
+@router.get("/seller/{seller_id}/products")
+def seller_products(seller_id: int, db: Session = Depends(get_db)):
+    seller = db.query(Customer).filter(Customer.id == seller_id).first()
+    # Seller IDs are stored in the existing sellers table, not customer profiles.
+    from app.models import Seller
+    seller = db.query(Seller).filter(Seller.id == seller_id).first()
+    if not seller:
+        raise HTTPException(404, "Продавец не найден")
+    return db.query(Product).filter(Product.seller_id == seller_id).order_by(Product.id).all()
+
+
 @router.post("/seller/intake")
 def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == body.product_id).first()
