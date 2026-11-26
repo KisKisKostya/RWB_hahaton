@@ -183,21 +183,32 @@ def set_order_status(order: Order, new_status: str) -> None:
     order.status = transition_order(order.status, new_status)
 
 
-def find_local_stock(db: Session, product_id: int, buyer_city: str) -> Optional[StockItem]:
-    """Сток на ПВЗ того же города с top_flag, не хаб."""
-    q = (
+def find_local_stock(
+    db: Session,
+    product_id: int,
+    buyer_city: str,
+    required_qty: int = 1,
+) -> Optional[StockItem]:
+    """Return a TOP stock lot from a local PVZ that can cover the requested order."""
+    rows = (
         db.query(StockItem)
         .join(PVZ, StockItem.pvz_id == PVZ.id)
         .filter(
             StockItem.product_id == product_id,
-            StockItem.status.in_(["ACCEPTED", "STORED"]),
+            StockItem.status.in_(("ACCEPTED", "STORED")),
             StockItem.top_flag.is_(True),
+            StockItem.qty > 0,
             PVZ.city == buyer_city,
             PVZ.is_hub.is_(False),
         )
         .order_by(StockItem.accepted_at.asc())
+        .all()
     )
-    return q.first()
+    quantity_by_pvz: dict[int, int] = {}
+    for row in rows:
+        quantity_by_pvz[row.pvz_id] = quantity_by_pvz.get(row.pvz_id, 0) + row.qty
+    eligible = {pvz_id for pvz_id, quantity in quantity_by_pvz.items() if quantity >= required_qty}
+    return next((row for row in rows if row.pvz_id in eligible), None)
 
 
 def find_hub(db: Session) -> Optional[PVZ]:
@@ -264,7 +275,7 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
     db.query(RouteOption).filter(RouteOption.order_id == order.id).delete()
     db.flush()
 
-    local_item = find_local_stock(db, order.product_id, order.buyer_city)
+    local_item = find_local_stock(db, order.product_id, order.buyer_city, order.qty)
     hub = find_hub(db)
 
     # --- hub first (local needs hub eta / marketplace_cost) ---
