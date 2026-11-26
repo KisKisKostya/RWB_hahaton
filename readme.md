@@ -100,6 +100,7 @@ RWB_hahaton/
 │   │   ├── tariffs.py       # Демонстрационные тарифы
 │   │   └── seed.py          # Наполнение базы демонстрационными данными
 │   ├── tests/               # Backend-тесты
+│   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/
 │   └── pvz/
@@ -109,9 +110,14 @@ RWB_hahaton/
 │       │   ├── OperationsWorkspaces.tsx
 │       │   └── api.ts
 │       ├── package.json
-│       └── package-lock.json
+│       ├── package-lock.json
+│       ├── Dockerfile
+│       └── nginx.conf
 ├── docs/
 │   └── SUBMISSION_READINESS.md  # Подробный сценарий сдачи и проверки MVP
+├── docker-compose.yml          # Запуск frontend и backend
+├── .env.example                # Пример переменных окружения
+├── .dockerignore
 └── readme.md
 ```
 
