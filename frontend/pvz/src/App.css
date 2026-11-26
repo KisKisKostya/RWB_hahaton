@@ -315,3 +315,5 @@ button { cursor: pointer; }
   .stock-heading { flex-direction: column; }
   .stock-heading .button { width: 100%; }
 }
+
+.negative-amount { color: #b24c59; font-weight: 750; }
