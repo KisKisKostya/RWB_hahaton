@@ -1176,6 +1176,10 @@ def confirm_customer_pickup(
         raise HTTPException(409, "Резерв товара не найден")
     reserved_stock.status = "ISSUED"
     order.status = "ISSUED"
+    location = db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
+    if location:
+        calculate_assortment(db, location, sync_flags=True)
+    plan_rebalancing(db)
     db.commit()
     return {"order_id": order.id, "status": order.status, "message": "Получение заказа подтверждено"}
 
