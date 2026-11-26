@@ -24,6 +24,8 @@ from app.models import (
     init_db,
     utcnow,
 )
+from app.accruals import make_accrual, make_intake_accrual
+from app.lifecycle import transition_order, transition_stock
 from app.routing import build_hub, build_local
 from app.tariffs import (
     ASSEMBLY_FEE,
@@ -128,6 +130,12 @@ def capacity_snapshot(db: Session, pvz: PVZ, incoming: int = 0) -> dict:
     }
 
 
+def persist_accrual(db: Session, payload: dict) -> Accrual:
+    row = Accrual(**payload)
+    db.add(row)
+    return row
+
+
 def write_accrual(
     db: Session,
     *,
@@ -137,15 +145,16 @@ def write_accrual(
     order_id: Optional[int] = None,
     stock_item_id: Optional[int] = None,
 ) -> Accrual:
-    row = Accrual(
-        pvz_id=pvz_id,
-        order_id=order_id,
-        stock_item_id=stock_item_id,
-        type=accrual_type,
-        amount=amount,
+    return persist_accrual(
+        db,
+        make_accrual(
+            pvz_id=pvz_id,
+            accrual_type=accrual_type,
+            amount=amount,
+            order_id=order_id,
+            stock_item_id=stock_item_id,
+        ),
     )
-    db.add(row)
-    return row
 
 
 def set_stock_status(
@@ -156,15 +165,21 @@ def set_stock_status(
     order_id: Optional[int] = None,
     amount: float = 0.0,
 ) -> None:
-    item.status = new_status
-    write_accrual(
-        db,
+    status, accrual = transition_stock(
+        item.status,
+        new_status,
         pvz_id=item.pvz_id,
-        accrual_type=f"status:{new_status}",
-        amount=amount,
-        order_id=order_id,
         stock_item_id=item.id,
+        order_id=order_id,
+        amount=amount,
     )
+    item.status = status
+    if accrual:
+        persist_accrual(db, accrual)
+
+
+def set_order_status(order: Order, new_status: str) -> None:
+    order.status = transition_order(order.status, new_status)
 
 
 def find_local_stock(db: Session, product_id: int, buyer_city: str) -> Optional[StockItem]:
@@ -350,22 +365,10 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
     )
     db.add(item)
     db.flush()
-    fee = (pvz.intake_fee or INTAKE_FEE) * body.qty
-    write_accrual(
-        db,
-        pvz_id=pvz_id,
-        accrual_type="intake",
-        amount=fee,
-        stock_item_id=item.id,
+    persist_accrual(
+        db, make_intake_accrual(pvz_id=pvz_id, qty=body.qty, stock_item_id=item.id)
     )
-    item.status = "STORED"
-    write_accrual(
-        db,
-        pvz_id=pvz_id,
-        accrual_type="status:STORED",
-        amount=0.0,
-        stock_item_id=item.id,
-    )
+    set_stock_status(db, item, "STORED")
     db.commit()
     db.refresh(item)
     return item
@@ -441,7 +444,7 @@ def select_route(order_id: int, body: schemas.RouteSelectIn, db: Session = Depen
         )
 
     order.chosen_route_id = route.id
-    order.status = "ROUTE_SELECTED"
+    set_order_status(order, "ROUTE_SELECTED")
 
     # reserve stock / capacity
     if route.type == "local" and route.source_pvz_id:
@@ -457,7 +460,7 @@ def select_route(order_id: int, body: schemas.RouteSelectIn, db: Session = Depen
                 expires_at=utcnow() + timedelta(days=2),
             )
         )
-        order.status = "RESERVED"
+        set_order_status(order, "RESERVED")
     elif route.type == "hub":
         hub = find_hub(db)
         if hub:
@@ -466,15 +469,12 @@ def select_route(order_id: int, body: schemas.RouteSelectIn, db: Session = Depen
                 .filter(
                     StockItem.product_id == order.product_id,
                     StockItem.pvz_id == hub.id,
-                    StockItem.status.in_(["ACCEPTED", "STORED"]),
+                    StockItem.status == "STORED",
                 )
                 .first()
             )
             if item:
                 set_stock_status(db, item, "RESERVED", order_id=order.id)
-            else:
-                # create transit reservation at buyer
-                pass
             db.add(
                 CapacityReservation(
                     pvz_id=order.buyer_pvz_id,
@@ -483,7 +483,7 @@ def select_route(order_id: int, body: schemas.RouteSelectIn, db: Session = Depen
                     expires_at=utcnow() + timedelta(days=3),
                 )
             )
-            order.status = "RESERVED"
+            set_order_status(order, "RESERVED")
 
     db.commit()
     db.refresh(order)
@@ -495,8 +495,12 @@ def assemble(order_id: int, db: Session = Depends(get_db)):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "order not found")
-    if order.status not in ("RESERVED", "ROUTE_SELECTED"):
-        raise HTTPException(409, f"bad status: {order.status}")
+    try:
+        if order.status == "ROUTE_SELECTED":
+            set_order_status(order, "RESERVED")
+        set_order_status(order, "ASSEMBLED")
+    except KeyError as exc:
+        raise HTTPException(409, f"bad status: {order.status}") from exc
 
     route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
     if route and route.source_pvz_id:
@@ -514,7 +518,6 @@ def assemble(order_id: int, db: Session = Depends(get_db)):
                 db, item, "ASSEMBLED", order_id=order.id, amount=ASSEMBLY_FEE
             )
 
-    order.status = "ASSEMBLED"
     db.commit()
     db.refresh(order)
     return order
@@ -525,16 +528,14 @@ def issue(order_id: int, db: Session = Depends(get_db)):
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "order not found")
-    if order.status not in ("ASSEMBLED", "IN_TRANSIT", "READY", "RESERVED"):
-        # allow READY path
+    try:
         if order.status == "ASSEMBLED":
-            order.status = "IN_TRANSIT"
-        else:
-            raise HTTPException(409, f"bad status: {order.status}")
-
-    if order.status == "ASSEMBLED":
-        order.status = "IN_TRANSIT"
-        db.flush()
+            set_order_status(order, "IN_TRANSIT")
+        if order.status == "IN_TRANSIT":
+            set_order_status(order, "READY")
+        set_order_status(order, "ISSUED")
+    except KeyError as exc:
+        raise HTTPException(409, f"bad status: {order.status}") from exc
 
     route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
     if route and route.source_pvz_id:
@@ -548,9 +549,10 @@ def issue(order_id: int, db: Session = Depends(get_db)):
             .first()
         )
         if item:
+            if item.status == "RESERVED":
+                set_stock_status(db, item, "ASSEMBLED", order_id=order.id)
             set_stock_status(db, item, "ISSUED", order_id=order.id)
 
-    # buyer intake accrual
     write_accrual(
         db,
         pvz_id=order.buyer_pvz_id,
@@ -567,7 +569,6 @@ def issue(order_id: int, db: Session = Depends(get_db)):
             order_id=order.id,
         )
 
-    order.status = "ISSUED"
     db.commit()
     db.refresh(order)
     return order
@@ -578,14 +579,11 @@ def return_order(order_id: int, body: schemas.ReturnIn, db: Session = Depends(ge
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "order not found")
-    if order.status not in ("ISSUED", "READY"):
-        raise HTTPException(409, f"bad status: {order.status}")
 
     if body.condition == "damaged":
         decision = "to_seller"
         stock_status = "DAMAGED"
     else:
-        # intact → keep at buyer PVZ or relocate if no capacity
         cap = capacity_snapshot(
             db, db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first(), incoming=order.qty
         )
@@ -621,9 +619,16 @@ def return_order(order_id: int, body: schemas.ReturnIn, db: Session = Depends(ge
             hub = find_hub(db)
             if hub:
                 item.pvz_id = hub.id
-        set_stock_status(db, item, stock_status, order_id=order.id)
+        try:
+            set_stock_status(db, item, stock_status, order_id=order.id)
+        except KeyError as exc:
+            raise HTTPException(409, f"bad stock status: {item.status}") from exc
 
-    order.status = "RETURNED"
+    try:
+        set_order_status(order, "RETURNED")
+    except KeyError as exc:
+        raise HTTPException(409, f"bad status: {order.status}") from exc
+
     db.commit()
     db.refresh(ret)
     return ret
@@ -644,23 +649,26 @@ def relocate(stock_id: int, body: schemas.RelocateIn, db: Session = Depends(get_
 
     # TTL / TOP recheck
     now = utcnow()
-    if item.storage_deadline and item.storage_deadline < now:
-        set_stock_status(db, item, "EXPIRED", amount=0.0)
-        set_stock_status(db, item, "TO_SELLER", amount=0.0)
-        db.commit()
-        db.refresh(item)
-        return item
+    try:
+        if item.storage_deadline and item.storage_deadline < now:
+            set_stock_status(db, item, "EXPIRED", amount=0.0)
+            set_stock_status(db, item, "TO_SELLER", amount=0.0)
+            db.commit()
+            db.refresh(item)
+            return item
 
-    if item.last_top_check and (now - item.last_top_check).days >= TOP_RECHECK_DAYS:
-        item.top_flag = False
-        item.last_top_check = now
+        if item.last_top_check and (now - item.last_top_check).days >= TOP_RECHECK_DAYS:
+            item.top_flag = False
+            item.last_top_check = now
 
-    item.pvz_id = target.id
-    set_stock_status(db, item, "RELOCATED", amount=0.0)
-    if target.is_hub:
-        set_stock_status(db, item, "TO_HUB", amount=0.0)
-    else:
-        set_stock_status(db, item, "STORED", amount=0.0)
+        item.pvz_id = target.id
+        set_stock_status(db, item, "RELOCATED", amount=0.0)
+        if target.is_hub:
+            set_stock_status(db, item, "TO_HUB", amount=0.0)
+        else:
+            set_stock_status(db, item, "STORED", amount=0.0)
+    except KeyError as exc:
+        raise HTTPException(409, f"bad stock status: {item.status}") from exc
 
     db.commit()
     db.refresh(item)
