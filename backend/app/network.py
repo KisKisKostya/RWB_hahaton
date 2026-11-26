@@ -569,9 +569,17 @@ def update_pvz(pvz_id: int, body: PVZUpdate, db: Session = Depends(get_db)):
     changes = body.model_dump(exclude_unset=True)
     for key, value in changes.items():
         setattr(pvz, key, value)
+
     _refresh_waiting_transfers(db)
+    for location in db.query(PVZ).filter(PVZ.is_mesh_enabled.is_(True)).all():
+        calculate_assortment(db, location, sync_flags=True)
+    plans = plan_rebalancing(db)
     db.commit()
-    return {"id": pvz.id, "updated": list(changes.keys())}
+    return {
+        "id": pvz.id,
+        "updated": list(changes.keys()),
+        "rebalanced_transfers": [transfer.id for transfer in plans],
+    }
 
 
 @router.get("/network/edges")
