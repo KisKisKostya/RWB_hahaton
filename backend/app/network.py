@@ -798,20 +798,27 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == transfer.product_id).first()
     if not source or not target or not product:
         raise HTTPException(404, "Не найден пункт или товар")
-    available = db.query(StockItem).filter(
+    available_rows = db.query(StockItem).filter(
         StockItem.pvz_id == source.id,
         StockItem.product_id == product.id,
         StockItem.status == "STORED",
-        StockItem.qty >= transfer.qty,
-    ).order_by(StockItem.accepted_at).first()
-    if not available:
+        StockItem.qty > 0,
+    ).order_by(StockItem.accepted_at).all()
+    total_available = sum(row.qty for row in available_rows)
+    if total_available < transfer.qty:
         raise HTTPException(409, "На исходном ПВЗ больше нет нужного количества товара")
     added_volume = _volume_m3(product) * transfer.qty
     if _occupied_volume(db, target.id) + added_volume > _storage_capacity(target):
         raise HTTPException(409, "На целевом пункте недостаточно свободного объёма")
-    available.qty -= transfer.qty
-    if available.qty == 0:
-        available.status = "RELOCATED"
+    remaining = transfer.qty
+    for row in available_rows:
+        taken = min(row.qty, remaining)
+        row.qty -= taken
+        remaining -= taken
+        if row.qty == 0:
+            row.status = "RELOCATED"
+        if remaining <= 0:
+            break
     db.add(StockItem(
         product_id=product.id,
         pvz_id=target.id,
