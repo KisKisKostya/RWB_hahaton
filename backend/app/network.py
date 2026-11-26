@@ -497,15 +497,16 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
     return plans
 
 def _refresh_waiting_transfers(db: Session) -> None:
-    waiting = db.query(InventoryTransfer).filter(InventoryTransfer.status == "WAITING_ROUTE").all()
-    for transfer in waiting:
+    pending = db.query(InventoryTransfer).filter(
+        InventoryTransfer.status.in_(TRANSFER_PENDING)
+    ).all()
+    for transfer in pending:
         route_id, distance = _route_for_transfer(
             db, transfer.from_pvz_id, transfer.to_pvz_id
         )
-        if route_id:
-            transfer.route_id = route_id
-            transfer.distance_km = distance
-            transfer.status = "READY_ON_ROUTE"
+        transfer.route_id = route_id
+        transfer.distance_km = distance
+        transfer.status = "READY_ON_ROUTE" if route_id else "WAITING_ROUTE"
 
 
 @router.get("/network/map")
@@ -574,6 +575,7 @@ def update_pvz(pvz_id: int, body: PVZUpdate, db: Session = Depends(get_db)):
             raise HTTPException(409, "В сети может быть только один основной хаб")
     for key, value in changes.items():
         setattr(pvz, key, value)
+    _refresh_waiting_transfers(db)
     db.commit()
     return {"id": pvz.id, "updated": list(changes.keys())}
 
@@ -605,6 +607,7 @@ def delete_edge(edge_id: int, db: Session = Depends(get_db)):
     if not edge:
         raise HTTPException(404, "Дорожное ребро не найдено")
     edge.is_active = False
+    _refresh_waiting_transfers(db)
     db.commit()
     return {"deleted": edge_id}
 
@@ -666,8 +669,7 @@ def set_route_active(route_id: int, active: bool = Query(...), db: Session = Dep
     if not route:
         raise HTTPException(404, "Рейс не найден")
     route.is_active = active
-    if active:
-        _refresh_waiting_transfers(db)
+    _refresh_waiting_transfers(db)
     db.commit()
     return {"id": route.id, "is_active": route.is_active}
 
