@@ -48,6 +48,7 @@ export const api = {
     request('/orders/' + orderId + '/return', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getReturns: () => request('/returns'),
   getIncidents: () => request('/ops/incidents'),
+  runStockMaintenance: () => request('/ops/stock/maintenance', { method: 'POST' }),
   reportTransferFailure: (id: number, message: string) =>
     request('/network/transfers/' + id + '/report-failure?message=' + encodeURIComponent(message), { method: 'POST' }),
   retryTransfer: (id: number) => request('/network/transfers/' + id + '/retry', { method: 'POST' }),
