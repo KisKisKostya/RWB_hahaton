@@ -63,9 +63,6 @@ const money = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value || 0);
 
-const dateFormat = (value: string) =>
-  new Date(value).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-
 const dateTimeFormat = (value: string) =>
   new Date(value).toLocaleString('ru-RU', {
     day: 'numeric',
@@ -472,7 +469,7 @@ function App() {
                     <span className={'status-pill ' + (capacity?.capacity_ok ? 'status-success' : 'status-warning')}><i />{capacity?.capacity_ok ? 'В норме' : 'Лимит достигнут'}</span>
                   </div>
                   <div className="capacity-content">
-                    <div className="capacity-ring" style={{ '--progress': capacityPercent + '%' } as CSSProperties}>
+                    <div className="capacity-ring" style={{ '--progress': capacityPercent + '%' } as CSSProperties & { '--progress': string }}>
                       <div><strong>{capacityPercent}<small>%</small></strong><span>занято</span></div>
                     </div>
                     <div className="capacity-legend">
