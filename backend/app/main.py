@@ -361,8 +361,8 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
         accepted_at=now,
         ttl_days=ttl,
         storage_deadline=now + timedelta(days=ttl),
-        top_flag=body.top_flag,
-        last_top_check=now if body.top_flag else None,
+        top_flag=False,
+        last_top_check=None,
     )
     db.add(item)
     db.flush()
@@ -370,6 +370,8 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
         db, make_intake_accrual(pvz_id=pvz_id, qty=body.qty, stock_item_id=item.id)
     )
     set_stock_status(db, item, "STORED")
+    from app.network import calculate_assortment
+    calculate_assortment(db, pvz, sync_flags=True)
     db.commit()
     db.refresh(item)
     return item
