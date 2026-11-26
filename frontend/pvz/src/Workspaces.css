@@ -99,6 +99,12 @@
 .assortment-metric,.assortment-qty { display:flex; flex-direction:column; align-items:flex-end; gap:4px; white-space:nowrap; }
 .assortment-metric strong { color:#545e72; font-size:10px; }
 .assortment-qty strong { color:#168e6b; font-size:10px; }
+.demand-history-list { display:flex; flex-direction:column; gap:10px; }
+.demand-history-week { border:1px solid #edf0f5; border-radius:9px; padding:11px; }
+.demand-history-week > strong { display:block; color:#596276; font-size:9px; margin-bottom:9px; }
+.demand-history-week > div { display:flex; flex-wrap:wrap; gap:7px; }
+.demand-history-week span { display:inline-flex; align-items:center; gap:5px; background:#f8f9fc; border-radius:6px; color:#818b9d; padding:6px 8px; font-size:8px; }
+.demand-history-week span b { color:#a31a82; }
 .candidate-list { display:flex; flex-direction:column; gap:9px; }
 .candidate-list > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; padding:9px 10px; background:#fafbfc; border-radius:7px; }
 .candidate-list span { color:#525c70; font-size:9px; font-weight:650; }
