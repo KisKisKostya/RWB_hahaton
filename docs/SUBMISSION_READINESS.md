@@ -63,6 +63,7 @@ Open the local Vite URL printed in the terminal. The backend API documentation i
 2. Register a damaged return for another issued order. The item receives the non-sellable `DAMAGED` status and an open incident is created. Resolve that incident after confirming the item has been handed to the seller; all lots attached to that order are updated.
 3. Open **Сбои и инциденты**. Report a route failure for a transfer. Pause the affected route in **Дорожные рейсы**, create or reactivate an alternative route with the correct stop order, then return to the incident screen and retry assignment. Once a compatible route is found, the incident is resolved.
 4. Use the same screen to cancel an active order. Demonstrate that its capacity reservation is deleted and all reserved/assembled lots are restored to `STORED`.
+5. In **Сбои и инциденты**, run **Проверить сроки и обновить TOP**. The seeded long-storage lot becomes `EXPIRED`, is removed from sellable stock but continues to occupy storage volume, and creates a seller-handoff incident. Confirm seller handoff to move it to `TO_SELLER`. The same maintenance action refreshes stale TOP flags using the configured five-day interval.
 
 ### Part E — Finance
 
@@ -96,6 +97,7 @@ The financial summary is a transparent operating-model calculation based on the 
 - **Order delivery failure:** order moves to `FAILED_ROUTE`, reservations are released and an incident is created.
 - **Intact return with no local capacity:** the return is queued for a Mesh transfer to a suitable connected hub; if there is no suitable hub/route, an open incident requires operator resolution.
 - **Damaged return:** the item is removed from sellable stock and remains in the incident queue until the operator confirms handoff to the seller.
+- **Long storage / TTL:** the maintenance operation marks overdue stored lots as `EXPIRED`, leaves them in occupied capacity until seller handoff, creates an incident and refreshes stale TOP flags.
 - **Duplicate return:** the API rejects a second return for the same order.
 
 ## 6. Important limitations to disclose
