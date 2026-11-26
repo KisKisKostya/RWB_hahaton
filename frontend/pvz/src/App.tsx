@@ -99,6 +99,10 @@ const accrualNames: Record<string, string> = {
   assembly: 'Сборка заказа',
   issue_intake: 'Выдача заказа',
   pvz_income: 'Доход ПВЗ',
+  local_bonus: 'Бонус за локальную выдачу',
+  return_refund: 'Возврат покупателю',
+  'status:ASSEMBLED': 'Сборка товара',
+  'status:ISSUED': 'Выдача товара',
   relocation: 'Перемещение',
 };
 
@@ -673,7 +677,7 @@ function App() {
                           <td><div className="accrual-name"><div className="activity-icon"><Icon name="wallet" size={16} /></div><strong>{accrualNames[item.type] || item.type}</strong></div></td>
                           <td>{dateTimeFormat(item.created_at)}</td>
                           <td><span className="muted">{item.order_id ? 'Заказ #' + item.order_id : item.stock_item_id ? 'Товар #' + item.stock_item_id : '—'}</span></td>
-                          <td><strong className="positive-amount">+{money(item.amount)}</strong></td>
+                          <td><strong className={item.amount < 0 ? 'negative-amount' : 'positive-amount'}>{item.amount > 0 ? '+' : ''}{money(item.amount)}</strong></td>
                         </tr>
                       ))}
                       {recentAccruals.length === 0 && <tr><td colSpan={4} className="empty-state">Начислений пока нет</td></tr>}
