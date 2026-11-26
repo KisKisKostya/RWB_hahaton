@@ -28,6 +28,7 @@ from app.models import (
 router = APIRouter(tags=["network", "demand", "customer"])
 
 ACTIVE_STOCK = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED")
+OCCUPIED_STOCK = (*ACTIVE_STOCK, "IN_TRANSFER")
 TRANSFER_PENDING = ("WAITING_ROUTE", "READY_ON_ROUTE")
 MAX_PVZ_ITEM_VOLUME_M3 = 0.08
 CATEGORY_MAX_VOLUME_M3 = {
@@ -151,7 +152,7 @@ def _occupied_volume(db: Session, pvz_id: int) -> float:
     rows = (
         db.query(StockItem, Product)
         .join(Product, Product.id == StockItem.product_id)
-        .filter(StockItem.pvz_id == pvz_id, StockItem.status.in_(ACTIVE_STOCK))
+        .filter(StockItem.pvz_id == pvz_id, StockItem.status.in_(OCCUPIED_STOCK))
         .all()
     )
     return sum(_volume_m3(product) * item.qty for item, product in rows)
@@ -371,8 +372,39 @@ def _create_transfer(
         InventoryTransfer.status.in_(TRANSFER_PENDING),
     ).first()
     if duplicate:
-        duplicate.qty = max(duplicate.qty, qty)
         return duplicate
+
+    available_rows = db.query(StockItem).filter(
+        StockItem.product_id == product_id,
+        StockItem.pvz_id == from_id,
+        StockItem.status == "STORED",
+        StockItem.qty > 0,
+    ).order_by(StockItem.accepted_at).all()
+    if sum(row.qty for row in available_rows) < qty:
+        return None
+
+    remaining = qty
+    for row in available_rows:
+        taken = min(row.qty, remaining)
+        if taken == row.qty:
+            row.status = "IN_TRANSFER"
+        else:
+            row.qty -= taken
+            db.add(StockItem(
+                product_id=row.product_id,
+                pvz_id=row.pvz_id,
+                qty=taken,
+                status="IN_TRANSFER",
+                accepted_at=row.accepted_at,
+                ttl_days=row.ttl_days,
+                storage_deadline=row.storage_deadline,
+                top_flag=False,
+                last_top_check=utcnow(),
+            ))
+        remaining -= taken
+        if remaining <= 0:
+            break
+
     route_id, distance = _route_for_transfer(db, from_id, to_id)
     transfer = InventoryTransfer(
         product_id=product_id,
@@ -832,7 +864,7 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     available_rows = db.query(StockItem).filter(
         StockItem.pvz_id == source.id,
         StockItem.product_id == product.id,
-        StockItem.status == "STORED",
+        StockItem.status == "IN_TRANSFER",
         StockItem.qty > 0,
     ).order_by(StockItem.accepted_at).all()
     total_available = sum(row.qty for row in available_rows)
