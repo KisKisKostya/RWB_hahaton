@@ -1,20 +1,20 @@
-# Mesh MVP — checklist and demo guide for submission
+# Mesh MVP — подготовка к сдаче
 
-## 1. Coverage of evaluation criteria
+## 1. Соответствие критериям оценки
 
-| Evaluation criterion | What is present in the prototype | How to demonstrate |
+| Критерий | Что реализовано в прототипе | Как показать |
 |---|---|---|
-| End-to-end business processes | Intake, demand upload, automatic TOP-5, stock reservations, routes, transfers, pickup, returns, cancellations and incident handling | Follow the scenario below without changing database rows manually |
-| Business processes exist in the MVP | Separate operator, seller and customer workspaces call backend API and persist changes in SQLite | Use the operator navigation, then switch to seller and customer |
-| Financial model is inside the code | Storage tariff, local/hub transport formula, assembly/intake fees, seller-specific commission, PVZ accruals, refunds and seller payouts | Open "Финансовая модель"; complete a pickup and a return; refresh the report |
-| Business logic follows the Mesh idea | Demand-first stock positioning, category and volume limits, road-graph pathfinding, truck-stop order and use of existing routes | Upload weekly demand, pass goods from seller and inspect the transfer queue |
-| Communication and demonstrability | This guide plus seeded demo data and explicit edge-case scenarios | Present the 6–8 minute walkthrough below |
+| Проработанность бизнес-процессов | Приёмка, спрос, автоматический TOP-5, резервы, маршруты, перемещения, выдача, возвраты, отмена, сбои и истечение TTL | Пройти сквозной сценарий без ручного изменения базы |
+| Наличие сценариев в MVP | Отдельные рабочие пространства оператора, продавца и покупателя связаны с API и сохраняют данные в SQLite | Переключаться между разделами интерфейса |
+| Финансовая модель встроена в код | Тарифы хранения, локальной и хабовой логистики, сборки и приёмки, индивидуальная комиссия продавца, начисления ПВЗ, возвратные корректировки и выплаты | Открыть «Финансовая модель», выполнить выдачу и возврат, обновить сводку |
+| Бизнес-смысл Mesh | Размещение запасов по фактическому спросу, ограничения вместимости и габаритов, дорожный граф, Дейкстра и использование существующих грузовых рейсов | Загрузить недельный спрос, передать товар от продавца и проследить перемещение |
+| Коммуникация и демонстрация | Есть инструкция, демо-данные и последовательности для обычного и нештатных процессов | Провести демонстрацию по сценарию ниже |
 
-## 2. Run locally
+## 2. Запуск проекта локально
 
-Requirements: Python 3.12+, Node.js 22+, npm.
+Требования: Python 3.12+, Node.js 22+, npm.
 
-Backend:
+**Backend** — первый терминал PowerShell:
 
 ```powershell
 cd backend
@@ -25,7 +25,7 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
-Frontend, in a second terminal:
+**Frontend** — второй терминал PowerShell:
 
 ```powershell
 cd frontend/pvz
@@ -33,94 +33,94 @@ npm ci
 npm run dev
 ```
 
-Open the local Vite URL printed in the terminal. The backend API documentation is available at `http://127.0.0.1:8000/docs`.
+Открой адрес Vite, который появится в терминале. Документация API доступна по адресу `http://127.0.0.1:8000/docs`.
 
-**Important:** `python -m app.seed` clears the demo tables before inserting fresh sample data. Run it only when you are ready to reset the local demo database. The application uses SQLite for this hackathon MVP.
+**Важно:** команда `python -m app.seed` очищает демонстрационные таблицы и заново заполняет базу данными. Выполняй её только при готовности сбросить локальную демо-базу.
 
-## 3. Recommended 6–8 minute demonstration
+## 3. Сценарий демонстрации на 6–8 минут
 
-### Part A — Operator: network and demand
+### Часть A. Оператор: сеть и спрос
 
-1. Open **Карта сети** and show PVZ/warehouse points, Mesh participation, storage area and height.
-2. Open **Дорожные рейсы**. Show the shortest road path and route stop sequence. Pause and reactivate a route to demonstrate route availability control.
-3. Open **Спрос и TOP-5**. Select a PVZ and upload a weekly snapshot in the format `product_id,quantity`, one product per line. The backend stores the snapshot and recalculates TOP-5 and target stock from demand, dimensions and free storage volume.
+1. Открой **«Карта сети»**. Покажи ПВЗ и склады, участие каждого объекта в Mesh, площадь и высоту хранения.
+2. Перейди в **«Дорожные рейсы»**. Рассчитай кратчайший путь по введённым дорожным рёбрам, покажи последовательность остановок. Останови рейс и включи его снова — это демонстрирует обработку изменения доступности маршрута.
+3. Открой **«Спрос и TOP-5»**. Выбери ПВЗ и загрузи недельный снимок продаж в формате `product_id,quantity`, по одной позиции на строку. Backend сохранит историю и пересчитает TOP-5 и целевой запас с учётом спроса, габаритов и свободного объёма.
 
-### Part B — Seller: automatic allocation
+### Часть B. Продавец: автоматическое распределение поставки
 
-1. Open **Поставки в Mesh**.
-2. Select a seller and product, verify package dimensions, specify quantity and the PVZ where the seller physically brings the goods.
-3. Submit the intake. Mesh chooses a demand PVZ or a hub, checks both the intake point and destination for unit and cubic-volume limits, records an intake accrual and places a transfer on an existing truck route when the destination differs.
+1. Открой **«Поставки в Mesh»**.
+2. Выбери продавца и товар, проверь габариты упаковки, задай количество и ПВЗ, куда продавец физически привёз товар.
+3. Передай поставку в Mesh. Система выберет ПВЗ с подтверждённым спросом или хаб, проверит вместимость точки приёма и места назначения, запишет начисление за приёмку и назначит перемещение на существующий грузовой рейс, если пункт назначения отличается от исходного.
 
-### Part C — Customer: local availability and pickup
+### Часть C. Покупатель: наличие и получение
 
-1. Open **Личный кабинет** and save a customer profile.
-2. Search for a product around the preferred PVZ. Show the list of points where it is already available.
-3. Create an order for an in-stock PVZ and confirm pickup. The exact stock batch is reserved, then issued; the reservation is released and PVZ accruals are written.
+1. Открой **«Личный кабинет»**, заполни профиль и сохрани предпочтительный ПВЗ.
+2. Найди товар поблизости. Покажи пункты, где он уже есть в наличии, и расстояние до них.
+3. Оформи заказ в ПВЗ с доступным остатком и подтверди получение. Точная партия товара резервируется и выдаётся, резерв ёмкости освобождается, а начисления ПВЗ записываются в базу.
 
-### Part D — Operator: return and exception handling
+### Часть D. Оператор: возвраты и исключения
 
-1. Open **Возвраты товаров**. Select the just-issued order and register an intact return. With available capacity, the goods return to the sellable stock. With no capacity, Mesh attempts to move them to a connected hub through an existing route.
-2. Register a damaged return for another issued order. The item receives the non-sellable `DAMAGED` status and an open incident is created. Resolve that incident after confirming the item has been handed to the seller; all lots attached to that order are updated.
-3. Open **Сбои и инциденты**. Report a route failure for a transfer. Pause the affected route in **Дорожные рейсы**, create or reactivate an alternative route with the correct stop order, then return to the incident screen and retry assignment. Once a compatible route is found, the incident is resolved.
-4. Use the same screen to cancel an active order. Demonstrate that its capacity reservation is deleted and all reserved/assembled lots are restored to `STORED`.
-5. In **Сбои и инциденты**, run **Проверить сроки и обновить TOP**. The seeded long-storage lot becomes `EXPIRED`, is removed from sellable stock but continues to occupy storage volume, and creates a seller-handoff incident. Confirm seller handoff to move it to `TO_SELLER`. The same maintenance action refreshes stale TOP flags using the configured five-day interval.
+1. Открой **«Возвраты»**. Выбери только что выданный заказ и зарегистрируй возврат целого товара. Если места достаточно, товар снова станет доступен для продажи. Если места нет, Mesh попытается отправить его на подключённый хаб попутным грузовым рейсом.
+2. Для другого выданного заказа зарегистрируй возврат повреждённого товара. Партия получит статус `DAMAGED`, перестанет считаться доступной для продажи и создаст открытый инцидент. После фактической передачи продавцу оператор подтверждает действие в карточке инцидента.
+3. Открой **«Сбои и инциденты»**. Зарегистрируй сбой назначенного грузового рейса. Останови этот маршрут в **«Дорожных рейсах»**, создай или активируй альтернативный маршрут с правильным порядком остановок, вернись к инциденту и повтори назначение. После нахождения подходящего рейса инцидент будет закрыт.
+4. На том же экране отмени активный заказ. Покажи, что резерв ёмкости удалён, а партии со статусом `RESERVED` или `ASSEMBLED` вернулись в `STORED`.
+5. В блоке **«Сроки хранения и TOP-перепроверка»** нажми **«Проверить сроки и обновить TOP»**. Демо-партия с истёкшим сроком перейдёт в `EXPIRED`, перестанет продаваться, но продолжит занимать место до подтверждения отправки продавцу. В этот момент создаётся инцидент. Одновременно система обновит устаревшие TOP-флаги с учётом интервала пять дней.
 
-### Part E — Finance
+### Часть E. Финансы
 
-1. Open **Финансовая модель**.
-2. Show gross sales, refunds, net sales, commission, storage fees, logistics costs, seller payout and PVZ accruals for the selected PVZ.
-3. Filter seller payouts. Explain that each seller's own `commission_rate` is used.
-4. Open **Начисления** to show the underlying entries, including negative return adjustments.
+1. Открой **«Финансовая модель»**.
+2. Покажи продажи до возвратов, возвраты, чистые продажи, комиссию, хранение, логистические затраты, выплаты продавцам и начисления ПВЗ для выбранной точки.
+3. Отфильтруй выплаты по продавцу. Объясни, что его комиссия рассчитывается по индивидуальному `commission_rate`.
+4. Открой **«Начисления»** и покажи первичные записи, в том числе отрицательную корректировку по возврату.
 
-## 4. Financial assumptions used by the demo
+## 4. Финансовые допущения демо
 
-The tariffs are example values for the prototype, not official Wildberries tariffs. They are kept in `backend/app/tariffs.py`.
+Тарифы ниже — демонстрационные параметры прототипа, а не официальные тарифы Wildberries. Они находятся в `backend/app/tariffs.py`.
 
-| Component | Demo formula |
+| Показатель | Формула демо |
 |---|---|
-| Storage | `ceil(days in storage) × 5 ₽ × units` |
-| Local route | `80 ₽ + 6 ₽ × road km + 20 ₽ assembly` |
-| Hub route | `120 ₽ + 3.5 ₽ × road km + 40 ₽ processing` |
-| Marketplace commission | Seller-specific percentage × net item sales |
-| Seller payout | Net item sales − seller commission − storage |
-| PVZ income | Intake, assembly, storage and local bonus accrual entries |
-| Return | Negative refund adjustment equal to item price × returned quantity |
+| Хранение | `ceil(дни хранения) × 5 ₽ × количество` |
+| Локальная логистика | `80 ₽ + 6 ₽ × км по дорогам + 20 ₽ сборка` |
+| Логистика через хаб | `120 ₽ + 3,5 ₽ × км + 40 ₽ обработка` |
+| Комиссия маркетплейса | Индивидуальный процент продавца × чистая стоимость продаж |
+| Выплата продавцу | Чистые продажи − комиссия продавца − хранение |
+| Доход ПВЗ | Начисления за приёмку, сборку, хранение и локальный бонус |
+| Возврат | Отрицательная финансовая корректировка на стоимость возвращённого количества |
 
-The financial summary is a transparent operating-model calculation based on the rows stored in the MVP database. It is not a payment processor, bank ledger or statutory accounting report.
+Финансовая сводка рассчитывается на backend по данным локальной базы MVP. Это демонстрационная операционная модель, а не платёжный шлюз, банковский реестр или бухгалтерская отчётность.
 
-## 5. Exception scenarios represented in the prototype
+## 5. Нештатные сценарии в прототипе
 
-- **No suitable truck route:** transfer remains in `WAITING_ROUTE`; it is not dispatched as an independent vehicle.
-- **Truck route cancelled or disabled:** assigned transfers are recalculated; those without a valid replacement return to the waiting queue and create an incident.
-- **Insufficient capacity at destination:** transfer completion is rejected, goods remain in transit status and a capacity incident is persisted.
-- **Order cancelled:** order moves to `CANCELLED`, capacity reservations are removed and stock reserved for the order is released.
-- **Order delivery failure:** order moves to `FAILED_ROUTE`, reservations are released and an incident is created.
-- **Intact return with no local capacity:** the return is queued for a Mesh transfer to a suitable connected hub; if there is no suitable hub/route, an open incident requires operator resolution.
-- **Damaged return:** the item is removed from sellable stock and remains in the incident queue until the operator confirms handoff to the seller.
-- **Long storage / TTL:** the maintenance operation marks overdue stored lots as `EXPIRED`, leaves them in occupied capacity until seller handoff, creates an incident and refreshes stale TOP flags.
-- **Duplicate return:** the API rejects a second return for the same order.
+- **Нет подходящего грузового рейса:** перемещение остаётся в `WAITING_ROUTE`; отдельная машина автоматически не назначается.
+- **Рейс отменён или остановлен:** активные перемещения перепроверяются; без подходящего маршрута они возвращаются в очередь и создаётся инцидент.
+- **Вместимость точки назначения изменилась в пути:** завершение перемещения отклоняется, товар остаётся в статусе «В грузовом рейсе», создаётся инцидент о нехватке места.
+- **Заказ отменён:** заказ переходит в `CANCELLED`, резервы ёмкости удаляются, зарезервированные партии возвращаются в доступный остаток.
+- **Сбой доставки заказа:** заказ переходит в `FAILED_ROUTE`, резервы освобождаются, создаётся инцидент.
+- **Целый возврат при нехватке места:** товар ставится в очередь перемещения на подходящий подключённый хаб; при отсутствии места или рейса создаётся инцидент для оператора.
+- **Повреждённый возврат:** товар исключается из продажи и остаётся в журнале инцидентов до подтверждения передачи продавцу.
+- **Длительное хранение / истёкший TTL:** просроченная партия получает статус `EXPIRED`, не продаётся и продолжает занимать складскую вместимость до подтверждения отправки продавцу. Создаётся инцидент, а устаревшие TOP-флаги перепроверяются.
+- **Повторный возврат одного заказа:** API отклоняет дублирующую операцию.
 
-## 6. Important limitations to disclose
+## 6. Ограничения, которые нужно честно озвучить
 
-1. The operator, seller and customer windows are demo workspaces, not production authentication or role-based access control. The customer demo uses a seeded/default profile.
-2. Geocoding, road distances and route stops are entered by the operator. Dijkstra computes a shortest path only over the road edges entered into this prototype; there is no live road-traffic or carrier API.
-3. A transfer is completed by explicit operator confirmation. There is no truck GPS, proof-of-delivery integration or automatic carrier status feed.
-4. A damaged item marked as sent to the seller is recorded after manual operator confirmation; an actual parcel shipment label or seller return service is not integrated.
-5. The displayed tariffs/category size limits are sample assumptions and must be replaced with approved commercial/logistics values before real deployment.
-6. Refunds and payouts are recorded as financial calculations and accrual corrections. The prototype does not execute card refunds or seller bank transfers.
-7. SQLite and the local development setup are intended for a hackathon demo, not concurrent production traffic.
+1. Окна оператора, продавца и покупателя являются демонстрационными рабочими пространствами. Промышленной аутентификации и полноценного разграничения ролей пока нет; покупательский демо-сценарий использует начальный профиль.
+2. Геокодирование, дорожные расстояния и остановки рейсов задаёт оператор. Алгоритм Дейкстры строит кратчайший путь только по введённому дорожному графу; live-трафика и API перевозчика нет.
+3. Фактическое завершение перемещения подтверждается оператором. GPS грузовика, электронного подтверждения доставки и автоматической интеграции перевозчика нет.
+4. Передача повреждённого или просроченного товара продавцу фиксируется после ручного подтверждения оператора; этикетка и реальная служба обратной доставки не интегрированы.
+5. Тарифы и категорийные ограничения по объёму — примерные параметры. Перед промышленным использованием их нужно заменить согласованными нормативами.
+6. Возвраты и выплаты рассчитываются и отражаются как финансовые корректировки. Реального возврата денег на карту или банковского перевода продавцу прототип не выполняет.
+7. SQLite и локальный запуск предназначены для хакатонной демонстрации, а не для одновременной промышленной нагрузки.
 
-## 7. Technical structure
+## 7. Устройство проекта
 
 - **Frontend:** React, TypeScript, Vite.
 - **Backend:** Python, FastAPI, Pydantic.
-- **Persistence:** SQLAlchemy + SQLite, with lightweight SQLite schema migrations.
-- **Demand and stock:** weekly demand snapshots, automatic TOP-5, package volume and storage constraints.
-- **Routing:** road graph, Dijkstra shortest path, truck routes with ordered stops.
-- **Operations:** exact stock-lot reservation, transfers, returns, cancellation, route/order incident log.
-- **Finance:** tariff functions, seller-level commission, PVZ accruals, refund adjustments and seller payout summaries.
-- **Quality gates:** backend pytest suite and frontend TypeScript/Vite production build in GitHub Actions.
+- **Хранение данных:** SQLAlchemy + SQLite, лёгкие миграции SQLite.
+- **Спрос и запасы:** недельные снимки спроса, автоматический TOP-5, ограничения по габаритам и объёму хранения.
+- **Маршрутизация:** дорожный граф, поиск кратчайшего пути алгоритмом Дейкстры, грузовые рейсы с последовательностью остановок.
+- **Операции:** резервирование конкретных партий, перемещения, возвраты, отмены, инциденты по заказам и маршрутам, истечение TTL.
+- **Финансы:** тарифные функции, индивидуальная комиссия продавца, начисления ПВЗ, возвратные корректировки и расчёт выплат.
+- **Проверки качества:** pytest для backend и production-сборка TypeScript/Vite для frontend через GitHub Actions.
 
-## 8. Suggested final statement
+## 8. Рекомендуемое итоговое объяснение жюри
 
-"Mesh переносит часть товара ближе к подтверждённому локальному спросу. Система использует фактическую статистику продаж, ограничения ПВЗ и габариты упаковки, а перемещение выполняет только на существующих грузовых маршрутах. MVP охватывает путь от поставки продавца до выдачи покупателю, а также возвраты, отмены и нештатные ситуации. Финансовые последствия основных операций рассчитываются в backend. Сейчас это демонстрационный прототип: тарификация, авторизация и внешние транспортные/платёжные интеграции требуют промышленной настройки."
+«Mesh переносит часть товара ближе к подтверждённому локальному спросу. Система использует фактическую статистику продаж, ограничения ПВЗ и габариты упаковки, а перемещение выполняет только на существующих грузовых маршрутах. MVP охватывает путь от поставки продавца до получения товара покупателем, а также возвраты, истечение сроков хранения, отмены и нештатные ситуации. Финансовые последствия основных операций рассчитываются в backend. Сейчас это демонстрационный прототип: тарифы, авторизация и внешние транспортные/платёжные интеграции требуют промышленной настройки».
