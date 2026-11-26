@@ -27,6 +27,7 @@ from app.models import (
 
 router = APIRouter(tags=["network", "demand", "customer"])
 
+AVAILABLE_STOCK = ("ACCEPTED", "STORED")
 ACTIVE_STOCK = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED")
 OCCUPIED_STOCK = (*ACTIVE_STOCK, "IN_TRANSFER")
 TRANSFER_PENDING = ("WAITING_ROUTE", "READY_ON_ROUTE")
@@ -267,7 +268,7 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
         current_rows = db.query(StockItem).filter(
             StockItem.pvz_id == pvz.id,
             StockItem.product_id == product.id,
-            StockItem.status.in_(ACTIVE_STOCK),
+            StockItem.status.in_(AVAILABLE_STOCK),
         ).all()
         current_qty = sum(item.qty for item in current_rows)
         remaining_need = max(target - current_qty, 0)
@@ -330,7 +331,7 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
     if sync_flags:
         stocks = db.query(StockItem).filter(
             StockItem.pvz_id == pvz.id,
-            StockItem.status.in_(ACTIVE_STOCK),
+            StockItem.status.in_(AVAILABLE_STOCK),
         ).all()
         for item in stocks:
             item.top_flag = item.product_id in selected_ids
@@ -480,7 +481,7 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
                     row.qty for row in db.query(StockItem).filter(
                         StockItem.pvz_id == target.id,
                         StockItem.product_id == product.id,
-                        StockItem.status.in_(ACTIVE_STOCK),
+                        StockItem.status.in_(AVAILABLE_STOCK),
                     ).all()
                 )
                 planned_incoming = sum(
