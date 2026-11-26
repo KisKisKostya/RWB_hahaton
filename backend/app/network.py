@@ -365,14 +365,6 @@ def _create_transfer(
 ) -> Optional[InventoryTransfer]:
     if qty <= 0 or from_id == to_id:
         return None
-    duplicate = db.query(InventoryTransfer).filter(
-        InventoryTransfer.product_id == product_id,
-        InventoryTransfer.from_pvz_id == from_id,
-        InventoryTransfer.to_pvz_id == to_id,
-        InventoryTransfer.status.in_(TRANSFER_PENDING),
-    ).first()
-    if duplicate:
-        return duplicate
 
     available_rows = db.query(StockItem).filter(
         StockItem.product_id == product_id,
@@ -382,28 +374,6 @@ def _create_transfer(
     ).order_by(StockItem.accepted_at).all()
     if sum(row.qty for row in available_rows) < qty:
         return None
-
-    remaining = qty
-    for row in available_rows:
-        taken = min(row.qty, remaining)
-        if taken == row.qty:
-            row.status = "IN_TRANSFER"
-        else:
-            row.qty -= taken
-            db.add(StockItem(
-                product_id=row.product_id,
-                pvz_id=row.pvz_id,
-                qty=taken,
-                status="IN_TRANSFER",
-                accepted_at=row.accepted_at,
-                ttl_days=row.ttl_days,
-                storage_deadline=row.storage_deadline,
-                top_flag=False,
-                last_top_check=utcnow(),
-            ))
-        remaining -= taken
-        if remaining <= 0:
-            break
 
     route_id, distance = _route_for_transfer(db, from_id, to_id)
     transfer = InventoryTransfer(
@@ -418,8 +388,33 @@ def _create_transfer(
     )
     db.add(transfer)
     db.flush()
-    return transfer
 
+    remaining = qty
+    for row in available_rows:
+        taken = min(row.qty, remaining)
+        if taken == row.qty:
+            row.status = "IN_TRANSFER"
+            row.transfer_id = transfer.id
+        else:
+            row.qty -= taken
+            db.add(StockItem(
+                product_id=row.product_id,
+                pvz_id=row.pvz_id,
+                qty=taken,
+                status="IN_TRANSFER",
+                accepted_at=row.accepted_at,
+                ttl_days=row.ttl_days,
+                storage_deadline=row.storage_deadline,
+                top_flag=False,
+                last_top_check=utcnow(),
+                transfer_id=transfer.id,
+            ))
+        remaining -= taken
+        if remaining <= 0:
+            break
+
+    db.flush()
+    return transfer
 
 def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
     locations = db.query(PVZ).filter(PVZ.is_mesh_enabled.is_(True)).all()
@@ -865,6 +860,7 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
         StockItem.pvz_id == source.id,
         StockItem.product_id == product.id,
         StockItem.status == "IN_TRANSFER",
+        StockItem.transfer_id == transfer.id,
         StockItem.qty > 0,
     ).order_by(StockItem.accepted_at).all()
     total_available = sum(row.qty for row in available_rows)
