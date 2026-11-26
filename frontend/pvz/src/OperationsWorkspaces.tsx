@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { api } from './api';
+import './OperationsWorkspaces.css';
 
 type Props = {
   selectedPvzId: number;
@@ -58,7 +60,7 @@ function Banner({ message, onClose }: { message: string; onClose: () => void }) 
   return <div className="ops-message" role="status"><span>{message}</span><button onClick={onClose}>×</button></div>;
 }
 
-function OpsPanel({ title, note, children }: { title: string; note: string; children: React.ReactNode }) {
+function OpsPanel({ title, note, children }: { title: string; note: string; children: ReactNode }) {
   return <section className="ops-panel"><header><div><h2>{title}</h2><p>{note}</p></div></header>{children}</section>;
 }
 
@@ -87,7 +89,7 @@ export function ReturnsWorkspace({ selectedPvzId, pvzList, onRefresh }: Props) {
   useEffect(() => { load(); }, []);
 
   const availableOrders = orders.filter((row) => row.status === 'ISSUED');
-  const submit = async (event: React.FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     try {
@@ -328,7 +330,7 @@ export function FinanceWorkspace({ selectedPvzId, pvzList }: Props) {
         </div>
       </OpsPanel>
     </div>}
-    <OpsPanel title="Расчёт выплат продавцам" note="Комиссия применяется по ставке конкретного продавца"}>
+    <OpsPanel title="Расчёт выплат продавцам" note="Комиссия применяется по ставке конкретного продавца">
       <div className="ops-filter-row"><label>Продавец<select value={selectedSeller} onChange={(e) => setSelectedSeller(e.target.value)}><option value="all">Все продавцы</option>{payouts.map((row) => <option key={row.seller_id} value={row.seller_id}>{row.seller_name} · {(row.commission_rate * 100).toFixed(0)}%</option>)}</select></label></div>
       <div className="ops-table-wrap"><table className="ops-table"><thead><tr><th>Продавец</th><th>Заказы</th><th>Продажи</th><th>Возвраты</th><th>Комиссия</th><th>Хранение</th><th>К выплате</th></tr></thead><tbody>
         {shownPayouts.map((row) => <tr key={row.seller_id}><td>{row.seller_name} <small>({(row.commission_rate * 100).toFixed(0)}%)</small></td><td>{row.orders_count}</td><td>{money(row.gross_sales)}</td><td>{money(row.refunds)}</td><td>{money(row.commission)}</td><td>{money(row.storage_fee)}</td><td><strong>{money(row.payout)}</strong></td></tr>)}
