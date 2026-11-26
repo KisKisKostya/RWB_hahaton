@@ -171,6 +171,7 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
 
     refund_amount = round(product.price * order.qty, 2)
     if body.condition == "damaged":
+        item.pvz_id = buyer_pvz.id
         _stock_transition(db, item, "DAMAGED", order.id)
         decision = "to_seller"
         return_status = "WAITING_SELLER"
@@ -184,10 +185,12 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
             stock_item_id=item.id,
         )
     else:
-        # A returned parcel physically enters the buyer's PVZ first.
+        # Evaluate space before moving the returned lot into the buyer's PVZ;
+        # ISSUED stock is not counted as occupied storage.
+        keep_at_buyer = _has_capacity(db, buyer_pvz, product, order.qty)
         item.pvz_id = buyer_pvz.id
         _stock_transition(db, item, "RETURNED", order.id)
-        if _has_capacity(db, buyer_pvz, product, order.qty):
+        if keep_at_buyer:
             _stock_transition(db, item, "STORED", order.id)
             item.accepted_at = utcnow()
             item.ttl_days = 7
@@ -204,13 +207,10 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
                 PVZ.is_mesh_enabled.is_(True),
             ).all()
             target_hub = next(
-                (
-                    hub for hub in hubs
-                    if _has_capacity(db, hub, product, order.qty)
-                    or (_occupied_units(db, hub.id) + order.qty <= int(hub.capacity_units * (1 - (hub.reserve_pct or 0))))
-                ),
+                (hub for hub in hubs if _has_capacity(db, hub, product, order.qty)),
                 None,
             )
+            transfer = None
             if target_hub:
                 transfer = _create_transfer(
                     db,
@@ -220,31 +220,27 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
                     to_id=target_hub.id,
                     reason="returned_stock_rebalance",
                 )
-                if transfer:
-                    decision = "relocate"
-                    return_status = "WAITING_TRANSFER"
-                    if transfer.status == "WAITING_ROUTE":
-                        _create_incident(
-                            db,
-                            incident_type="RETURN_WAITING_ROUTE",
-                            message=f"Возврат заказа #{order.id} ожидает подходящего рейса на хаб.",
-                            pvz_id=buyer_pvz.id,
-                            transfer_id=transfer.id,
-                            order_id=order.id,
-                            stock_item_id=item.id,
-                        )
-                else:
-                    decision = "relocate"
-                    return_status = "NEEDS_REVIEW"
+            if transfer:
+                decision = "relocate"
+                return_status = "WAITING_TRANSFER"
+                if transfer.status == "WAITING_ROUTE":
+                    _create_incident(
+                        db,
+                        incident_type="RETURN_WAITING_ROUTE",
+                        message=f"Возврат заказа #{order.id} ожидает подходящего рейса на хаб.",
+                        pvz_id=buyer_pvz.id,
+                        transfer_id=transfer.id,
+                        order_id=order.id,
+                        stock_item_id=item.id,
+                    )
             else:
                 decision = "relocate"
                 return_status = "NEEDS_REVIEW"
-            if return_status == "NEEDS_REVIEW":
                 _create_incident(
                     db,
                     incident_type="RETURN_CAPACITY",
                     severity="high",
-                    message=f"На ПВЗ {buyer_pvz.id} не хватает места для возврата заказа #{order.id}; свободного хаба нет.",
+                    message=f"На ПВЗ {buyer_pvz.id} не хватает места для возврата заказа #{order.id}; подходящего хаба или рейса нет.",
                     pvz_id=buyer_pvz.id,
                     order_id=order.id,
                     stock_item_id=item.id,
