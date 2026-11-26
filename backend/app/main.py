@@ -351,14 +351,14 @@ def intake(pvz_id: int, body: schemas.IntakeIn, db: Session = Depends(get_db)):
         raise HTTPException(409, detail={"error": "no_capacity", "capacity": cap})
 
     from app.network import (
-        MAX_PVZ_ITEM_VOLUME_M3,
+        category_volume_limit,
         _occupied_volume,
         _storage_capacity,
         _volume_m3,
         calculate_assortment,
     )
     unit_volume = _volume_m3(product)
-    if unit_volume > MAX_PVZ_ITEM_VOLUME_M3:
+    if unit_volume > category_volume_limit(product):
         raise HTTPException(409, detail={
             "error": "oversized_for_pvz",
             "volume_m3": round(unit_volume, 4),
