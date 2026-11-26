@@ -152,19 +152,21 @@ const navGroups: { label: string; items: { id: Tab; label: string; icon: string 
     { id: 'intake', label: 'Приёмка товара', icon: 'box' },
     { id: 'stock', label: 'Хранение', icon: 'warehouse' },
     { id: 'accruals', label: 'Начисления', icon: 'wallet' },
-    { id: 'network', label: 'Карта сети', icon: 'pin' },
-    { id: 'demand', label: 'Спрос и TOP-5', icon: 'trend' },
-    { id: 'routes', label: 'Дорожные рейсы', icon: 'arrow' },
-    { id: 'transfers', label: 'Перемещения', icon: 'refresh' },
     { id: 'returns', label: 'Возвраты', icon: 'arrow' },
     { id: 'incidents', label: 'Сбои и инциденты', icon: 'alert' },
-    { id: 'finance', label: 'Финансовая модель', icon: 'wallet' },
   ]},
   { label: 'ПРОДАВЕЦ', items: [
     { id: 'seller', label: 'Поставки в Mesh', icon: 'box' },
   ]},
   { label: 'ПОКУПАТЕЛЬ', items: [
     { id: 'customer', label: 'Личный кабинет', icon: 'user' },
+  ]},
+  { label: 'МАРКЕТПЛЕЙС', items: [
+    { id: 'network', label: 'Карта сети', icon: 'pin' },
+    { id: 'routes', label: 'Дорожные рейсы', icon: 'arrow' },
+    { id: 'demand', label: 'Спрос и TOP-5', icon: 'trend' },
+    { id: 'transfers', label: 'Перемещения', icon: 'refresh' },
+    { id: 'finance', label: 'Финансовая модель', icon: 'wallet' },
   ]},
 ];
 
