@@ -108,6 +108,7 @@ class Order(Base):
     status = Column(String, nullable=False, default="CREATED")
     chosen_route_id = Column(Integer, nullable=True)  # RouteOption.id, no FK (cycle)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    reserved_stock_item_id = Column(Integer, ForeignKey("stock_items.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
     product = relationship("Product", back_populates="orders")
@@ -269,6 +270,7 @@ def init_db() -> None:
         },
         "orders": {
             "customer_id": "INTEGER REFERENCES customers(id)",
+            "reserved_stock_item_id": "INTEGER REFERENCES stock_items(id)",
         },
     }
     from sqlalchemy import inspect, text
