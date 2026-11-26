@@ -69,7 +69,7 @@ export function ReturnsWorkspace({ selectedPvzId, pvzList, onRefresh }: Props) {
   const [returns, setReturns] = useState<ReturnRow[]>([]);
   const [orderId, setOrderId] = useState('');
   const [reason, setReason] = useState('Покупатель отказался от товара');
-  const [condition, setCondition] = useState('intact');
+  const [condition, setCondition] = useState<'intact' | 'damaged'>('intact');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
