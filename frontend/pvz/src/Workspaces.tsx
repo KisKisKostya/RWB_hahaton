@@ -34,7 +34,6 @@ type NetworkMap = { locations: Location[]; edges: any[]; routes: any[] };
 type Assortment = { top_products: any[]; candidates: any[]; storage_capacity_m3: number; occupied_volume_m3: number; free_volume_m3: number };
 type WorkspaceProps = { selectedPvzId: number; pvzList: Location[]; onRefresh?: () => void };
 
-const rub = (value: number) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value || 0);
 const jsonError = (error: unknown) => error instanceof Error ? error.message : 'Не удалось выполнить операцию';
 
 function Panel({ title, subtitle, children, action }: { title: string; subtitle?: string; children: ReactNode; action?: ReactNode }) {
