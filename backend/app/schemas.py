@@ -66,7 +66,6 @@ class ProductOut(BaseModel):
 class IntakeIn(BaseModel):
     product_id: int
     qty: int = Field(ge=1)
-    top_flag: bool = False
     ttl_days: Optional[int] = None
 
 
