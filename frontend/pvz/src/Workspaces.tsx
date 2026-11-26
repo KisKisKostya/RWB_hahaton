@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { api } from './api';
 import './Workspaces.css';
 
@@ -35,7 +35,7 @@ type WorkspaceProps = { selectedPvzId: number; pvzList: Location[]; onRefresh?: 
 const rub = (value: number) => new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(value || 0);
 const jsonError = (error: unknown) => error instanceof Error ? error.message : 'Не удалось выполнить операцию';
 
-function Panel({ title, subtitle, children, action }: { title: string; subtitle?: string; children: ReactNode; action?: React.ReactNode }) {
+function Panel({ title, subtitle, children, action }: { title: string; subtitle?: string; children: ReactNode; action?: ReactNode }) {
   return <section className="workspace-panel">
     <header className="workspace-panel-head">
       <div><h2>{title}</h2>{subtitle && <p>{subtitle}</p>}</div>
