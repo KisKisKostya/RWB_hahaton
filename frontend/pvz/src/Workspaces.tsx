@@ -449,6 +449,15 @@ export function CustomerWorkspace({ pvzList }: WorkspaceProps) {
     catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
   };
+  const confirmPickup = async (orderId: number) => {
+    setBusy(true);
+    try {
+      await api.confirmCustomerPickup(orderId, customerId);
+      setMessage('Получение заказа #' + orderId + ' подтверждено.');
+      setOrders(await api.getCustomerOrders(customerId));
+    } catch (error) { setMessage(jsonError(error)); }
+    finally { setBusy(false); }
+  };
   const orderHere = async (locationId: number) => {
     setBusy(true);
     try {
@@ -494,7 +503,7 @@ export function CustomerWorkspace({ pvzList }: WorkspaceProps) {
       </div>
     </div>
     <Panel title="Мои заказы" subtitle="История заказов в сети Mesh">
-      <div className="customer-orders">{orders.map((order) => <div key={order.id}><span className="customer-order-id">#{order.id}</span><div><strong>Товар #{order.product_id} · {order.qty} шт.</strong><small>ПВЗ #{order.buyer_pvz_id} · {new Date(order.created_at).toLocaleDateString('ru-RU')}</small></div><span className="order-status">{order.status}</span></div>)}{!orders.length && <div className="workspace-empty">Здесь появятся ваши заказы.</div>}</div>
+      <div className="customer-orders">{orders.map((order) => <div key={order.id}><span className="customer-order-id">#{order.id}</span><div><strong>Товар #{order.product_id} · {order.qty} шт.</strong><small>ПВЗ #{order.buyer_pvz_id} · {new Date(order.created_at).toLocaleDateString('ru-RU')}</small></div><span className="order-status">{order.status === 'READY' ? 'Готов к выдаче' : order.status === 'ISSUED' ? 'Получен' : order.status}</span>{order.status === 'READY' && <button className="workspace-button primary small" disabled={busy} onClick={() => confirmPickup(order.id)}>Подтвердить получение</button>}</div>)}{!orders.length && <div className="workspace-empty">Здесь появятся ваши заказы.</div>}</div>
     </Panel>
   </div>;
 }
