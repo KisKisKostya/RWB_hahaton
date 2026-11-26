@@ -78,6 +78,7 @@ const dateTimeFormat = (value: string) =>
 const statusNames: Record<string, string> = {
   ACCEPTED: 'Принят',
   STORED: 'На хранении',
+  IN_TRANSFER: 'В грузовом рейсе',
   RESERVED: 'Зарезервирован',
   ASSEMBLED: 'Собран',
   ISSUED: 'Выдан',
