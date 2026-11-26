@@ -80,13 +80,13 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
             : String(ids.find((id) => id !== Number(current.from_pvz_id)) || ids[0]),
         }));
       }
-      setMapCity((current) => result.locations.some((location) => location.city === current) ? current : result.locations[0]?.city || 'Казань');
+      setMapCity((current) => current || 'Вся сеть');
     } catch (error) { setMessage(jsonError(error)); }
   };
   useEffect(() => { load(); }, []);
 
-  const mapCities = Array.from(new Set(map.locations.map((node) => node.city)));
-  const cityLocations = map.locations.filter((node) => node.city === mapCity);
+  const mapCities = ['Вся сеть', ...Array.from(new Set(map.locations.map((node) => node.city)))];
+  const cityLocations = mapCity === 'Вся сеть' ? map.locations : map.locations.filter((node) => node.city === mapCity);
   const defaultCenters: Record<string, [number, number]> = {
     'Казань': [55.796, 49.106],
     'Москва': [55.7558, 37.6173],
@@ -97,8 +97,8 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         cityLocations.reduce((sum, node) => sum + Number(node.latitude || 0), 0) / cityLocations.length,
         cityLocations.reduce((sum, node) => sum + Number(node.longitude || 0), 0) / cityLocations.length,
       ]
-    : defaultCenters[mapCity] || [55.75, 37.61];
-  const zoom = 12;
+    : defaultCenters[mapCity] || [55.75, 43.0];
+  const zoom = mapCity === 'Вся сеть' ? 4 : 12;
   const worldSize = 256 * (2 ** zoom);
   const projectWorld = (latitude: number, longitude: number) => {
     const lat = Math.max(-85.05112878, Math.min(85.05112878, latitude));
@@ -147,7 +147,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     const x = ((event.clientX - rect.left) / rect.width) * 900 + originX;
     const y = ((event.clientY - rect.top) / rect.height) * 370 + originY;
     const coordinates = unprojectWorld(x, y);
-    setForm((current) => ({ ...current, city: mapCity, latitude: coordinates.latitude.toFixed(5), longitude: coordinates.longitude.toFixed(5) }));
+    setForm((current) => ({ ...current, city: mapCity === 'Вся сеть' ? current.city : mapCity, latitude: coordinates.latitude.toFixed(5), longitude: coordinates.longitude.toFixed(5) }));
     setMapPick(false);
     setMessage('Координаты точки выбраны на карте.');
   };
@@ -222,7 +222,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     <Message value={message} onClose={() => setMessage('')} />
     <div className="workspace-intro"><div><span className="workspace-kicker">ОПЕРАТОР · ГЕОГРАФИЯ</span><h1>Сеть пунктов и складов</h1><p>Добавляйте точки, задавайте их координаты и связывайте дорожными рёбрами для расчёта маршрутов.</p></div><div className="workspace-mini-stats"><div><strong>{map.locations.filter((x) => !x.is_hub).length}</strong><span>ПВЗ</span></div><div><strong>{map.locations.filter((x) => x.is_hub).length}</strong><span>Склады</span></div><div><strong>{map.edges.length}</strong><span>Дорог</span></div></div></div>
 
-    <Panel title="Карта сети Mesh" subtitle="Карта OpenStreetMap с маркерами ПВЗ и складов. Выберите город, затем кликните на карте, чтобы задать координаты новой точки.">
+    <Panel title="Карта сети Mesh" subtitle="Все ПВЗ и склады сети на OpenStreetMap. Переключитесь на город для точной установки новой точки.">
       <div className="network-map-toolbar">
         <span><i className="map-dot map-dot-pvz" /> Пункт выдачи <i className="map-dot map-dot-hub" /> Склад / хаб <i className="map-line" /> Дорога</span>
         <div className="network-map-actions">
