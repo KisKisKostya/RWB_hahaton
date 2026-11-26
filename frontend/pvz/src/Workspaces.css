@@ -36,8 +36,13 @@
 .map-dot-pvz { background:#b31389; }
 .map-dot-hub { background:#1e2a43; }
 .map-line { height:2px; width:20px; background:#9ba7b9; display:inline-block; margin-left:8px; }
-.network-map-canvas { width:100%; border:1px solid #edf0f5; border-radius:10px; overflow:hidden; background:#fbfcfd; }
-.network-map-canvas svg { display:block; width:100%; height:auto; min-height:220px; }
+.network-map-canvas { width:100%; height:370px; position:relative; border:1px solid #edf0f5; border-radius:10px; overflow:hidden; background:#e8edf0; }
+.network-map-tiles { position:absolute; inset:0; overflow:hidden; }
+.network-map-tiles img { position:absolute; width:256px; height:256px; max-width:none; user-select:none; }
+.network-map-canvas svg { position:absolute; inset:0; display:block; width:100%; height:100%; cursor:default; }
+.network-map-actions { display:flex; align-items:center; gap:8px; }
+.network-map-actions select { min-height:36px; border:1px solid #e8eaf0; border-radius:8px; padding:0 10px; color:#667087; background:#fff; font-size:10px; }
+.map-attribution { position:absolute; right:6px; bottom:5px; padding:3px 6px; background:#ffffffd9; color:#6e778a; font-size:8px; border-radius:4px; pointer-events:none; }
 .network-map-canvas.map-is-picking { cursor:crosshair; outline:2px solid #b31389; outline-offset:2px; }
 .map-node { cursor:default; }
 .map-location-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:13px; }
@@ -179,6 +184,9 @@
   .form-span-2 { grid-column:auto; }
   .network-map-toolbar { align-items:flex-start; flex-direction:column; }
   .network-map-toolbar > span { flex-wrap:wrap; }
+  .network-map-actions { width:100%; }
+  .network-map-actions select { flex:1; min-width:0; }
+  .network-map-canvas { height:300px; }
   .assortment-row { flex-wrap:wrap; gap:8px; }
   .assortment-product { flex-basis:calc(100% - 45px); }
   .assortment-metric { margin-left:36px; }
