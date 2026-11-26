@@ -116,6 +116,30 @@ def _has_capacity(db: Session, pvz: PVZ, product: Product, qty: int) -> bool:
     return _occupied_volume(db, pvz.id) + _volume_m3(product) * qty <= storage_capacity
 
 
+def _release_order_holds(db: Session, order: Order) -> int:
+    db.query(CapacityReservation).filter(
+        CapacityReservation.source.like(f"order:{order.id}%")
+    ).delete(synchronize_session=False)
+    rows = db.query(StockItem).filter(
+        StockItem.order_id == order.id,
+        StockItem.status.in_(("RESERVED", "ASSEMBLED")),
+    ).all()
+    if not rows and order.reserved_stock_item_id:
+        item = db.query(StockItem).filter(
+            StockItem.id == order.reserved_stock_item_id,
+            StockItem.status.in_(("RESERVED", "ASSEMBLED")),
+        ).first()
+        if item:
+            rows = [item]
+    for item in rows:
+        if item.status == "ASSEMBLED":
+            _stock_transition(db, item, "RESERVED", order.id)
+        if item.status == "RESERVED":
+            _stock_transition(db, item, "STORED", order.id)
+        item.order_id = None
+    return len(rows)
+
+
 def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
     if order.status != "ISSUED":
         raise HTTPException(409, "Вернуть можно только выданный заказ")
@@ -390,10 +414,20 @@ def resolve_incident(incident_id: int, body: IncidentResolution, db: Session = D
         raise HTTPException(404, "Инцидент не найден")
     if incident.status == "RESOLVED":
         raise HTTPException(409, "Инцидент уже закрыт")
-    if body.mark_sent_to_seller and incident.stock_item_id:
-        item = db.query(StockItem).filter(StockItem.id == incident.stock_item_id).first()
-        if item and item.status in ("DAMAGED", "RETURNED", "EXPIRED"):
-            _stock_transition(db, item, "TO_SELLER", incident.order_id)
+    if body.mark_sent_to_seller:
+        items = []
+        if incident.order_id:
+            items = db.query(StockItem).filter(
+                StockItem.order_id == incident.order_id,
+                StockItem.status.in_(("DAMAGED", "RETURNED", "EXPIRED")),
+            ).all()
+        if not items and incident.stock_item_id:
+            item = db.query(StockItem).filter(StockItem.id == incident.stock_item_id).first()
+            if item:
+                items = [item]
+        for item in items:
+            if item.status in ("DAMAGED", "RETURNED", "EXPIRED"):
+                _stock_transition(db, item, "TO_SELLER", incident.order_id)
     incident.status = "RESOLVED"
     incident.resolution_note = body.resolution_note
     incident.resolved_at = utcnow()
@@ -410,29 +444,9 @@ def cancel_order(order_id: int, db: Session = Depends(get_db)):
         order.status = transition_order(order.status, "CANCELLED")
     except KeyError as exc:
         raise HTTPException(409, f"Нельзя отменить заказ в статусе {order.status}") from exc
-
-    reservations = db.query(CapacityReservation).filter(
-        CapacityReservation.source.like(f"order:{order.id}%")
-    ).all()
-    for reservation in reservations:
-        db.delete(reservation)
-
-    rows = db.query(StockItem).filter(
-        StockItem.order_id == order.id,
-        StockItem.status.in_(("RESERVED", "ASSEMBLED")),
-    ).all()
-    if order.reserved_stock_item_id and not rows:
-        item = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
-        if item and item.status in ("RESERVED", "ASSEMBLED"):
-            rows = [item]
-    for item in rows:
-        if item.status == "ASSEMBLED":
-            _stock_transition(db, item, "RESERVED", order.id)
-        if item.status == "RESERVED":
-            _stock_transition(db, item, "STORED", order.id)
-        item.order_id = None
+    released = _release_order_holds(db, order)
     db.commit()
-    return {"order_id": order.id, "status": order.status, "released_stock_lots": len(rows)}
+    return {"order_id": order.id, "status": order.status, "released_stock_lots": released}
 
 
 @router.post("/orders/{order_id}/fail")
@@ -444,6 +458,7 @@ def mark_order_failed(order_id: int, message: str = Query(default="Не удал
         order.status = transition_order(order.status, "FAILED_ROUTE")
     except KeyError as exc:
         raise HTTPException(409, f"Нельзя отметить сбой заказа в статусе {order.status}") from exc
+    released = _release_order_holds(db, order)
     incident = _create_incident(
         db,
         incident_type="ORDER_ROUTE_FAILURE",
@@ -453,7 +468,7 @@ def mark_order_failed(order_id: int, message: str = Query(default="Не удал
         order_id=order.id,
     )
     db.commit()
-    return {"order_id": order.id, "status": order.status, "incident_id": incident.id}
+    return {"order_id": order.id, "status": order.status, "incident_id": incident.id, "released_stock_lots": released}
 
 
 def _storage_fee(item: Optional[StockItem], pvz: Optional[PVZ], qty: int) -> float:
