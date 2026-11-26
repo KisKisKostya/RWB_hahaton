@@ -387,10 +387,11 @@ def _create_transfer(
     if qty <= 0 or from_id == to_id:
         return None
 
+    source_statuses = ("RETURNED",) if reason == "returned_stock_rebalance" else ("STORED", "RETURNED")
     available_rows = db.query(StockItem).filter(
         StockItem.product_id == product_id,
         StockItem.pvz_id == from_id,
-        StockItem.status.in_(("STORED", "RETURNED")),
+        StockItem.status.in_(source_statuses),
         StockItem.qty > 0,
     ).order_by(StockItem.accepted_at).all()
     if sum(row.qty for row in available_rows) < qty:
