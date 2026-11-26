@@ -60,35 +60,80 @@ export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
   });
   const [edgeForm, setEdgeForm] = useState({ from_pvz_id: String(pvzList[0]?.id || ''), to_pvz_id: String(pvzList[1]?.id || ''), distance_km: '5' });
   const [mapPick, setMapPick] = useState(false);
+  const [mapCity, setMapCity] = useState('');
 
   const load = async () => {
-    try { setMap(await api.getNetworkMap()); } catch (error) { setMessage(jsonError(error)); }
+    try {
+      const result = await api.getNetworkMap();
+      setMap(result);
+      setMapCity((current) => current || result.locations[0]?.city || 'Казань');
+    } catch (error) { setMessage(jsonError(error)); }
   };
   useEffect(() => { load(); }, []);
 
-  const bounds = useMemo(() => {
-    if (!map.locations.length) return { minLat: 55.6, maxLat: 56, minLon: 48.8, maxLon: 49.4 };
-    const lats = map.locations.map((node) => Number(node.latitude || 0));
-    const lons = map.locations.map((node) => Number(node.longitude || 0));
-    return {
-      minLat: Math.min(...lats) - 0.04, maxLat: Math.max(...lats) + 0.04,
-      minLon: Math.min(...lons) - 0.04, maxLon: Math.max(...lons) + 0.04,
-    };
-  }, [map.locations]);
-
-  const point = (node: Location) => ({
-    x: 80 + ((Number(node.longitude) - bounds.minLon) / Math.max(bounds.maxLon - bounds.minLon, 0.001)) * 740,
-    y: 45 + ((bounds.maxLat - Number(node.latitude)) / Math.max(bounds.maxLat - bounds.minLat, 0.001)) * 280,
-  });
+  const mapCities = Array.from(new Set(map.locations.map((node) => node.city)));
+  const cityLocations = map.locations.filter((node) => node.city === mapCity);
+  const defaultCenters: Record<string, [number, number]> = {
+    'Казань': [55.796, 49.106],
+    'Москва': [55.7558, 37.6173],
+    'Йошкар-Ола': [56.6388, 47.8908],
+  };
+  const cityCenter: [number, number] = cityLocations.length
+    ? [
+        cityLocations.reduce((sum, node) => sum + Number(node.latitude || 0), 0) / cityLocations.length,
+        cityLocations.reduce((sum, node) => sum + Number(node.longitude || 0), 0) / cityLocations.length,
+      ]
+    : defaultCenters[mapCity] || [55.75, 37.61];
+  const zoom = 12;
+  const worldSize = 256 * (2 ** zoom);
+  const projectWorld = (latitude: number, longitude: number) => {
+    const lat = Math.max(-85.05112878, Math.min(85.05112878, latitude));
+    const x = (longitude + 180) / 360 * worldSize;
+    const sin = Math.sin(lat * Math.PI / 180);
+    const y = (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * worldSize;
+    return { x, y };
+  };
+  const unprojectWorld = (x: number, y: number) => {
+    const longitude = x / worldSize * 360 - 180;
+    const n = Math.PI - 2 * Math.PI * y / worldSize;
+    const latitude = 180 / Math.PI * Math.atan(Math.sinh(n));
+    return { latitude, longitude };
+  };
+  const centerPixel = projectWorld(cityCenter[0], cityCenter[1]);
+  const originX = centerPixel.x - 450;
+  const originY = centerPixel.y - 185;
+  const tileData = useMemo(() => {
+    const left = Math.floor(originX / 256) - 1;
+    const right = Math.floor((originX + 900) / 256) + 1;
+    const top = Math.floor(originY / 256) - 1;
+    const bottom = Math.floor((originY + 370) / 256) + 1;
+    const tiles = [];
+    for (let x = left; x <= right; x += 1) {
+      for (let y = top; y <= bottom; y += 1) {
+        if (y < 0 || y >= 2 ** zoom) continue;
+        const wrappedX = ((x % (2 ** zoom)) + (2 ** zoom)) % (2 ** zoom);
+        tiles.push({
+          key: wrappedX + '-' + y,
+          url: 'https://tile.openstreetmap.org/' + zoom + '/' + wrappedX + '/' + y + '.png',
+          left: x * 256 - originX,
+          top: y * 256 - originY,
+        });
+      }
+    }
+    return tiles;
+  }, [originX, originY]);
+  const point = (node: Location) => {
+    const projected = projectWorld(Number(node.latitude || 0), Number(node.longitude || 0));
+    return { x: projected.x - originX, y: projected.y - originY };
+  };
 
   const pickCoordinates = (event: MouseEvent<SVGSVGElement>) => {
     if (!mapPick) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 900;
-    const y = ((event.clientY - rect.top) / rect.height) * 370;
-    const longitude = bounds.minLon + ((x - 80) / 740) * (bounds.maxLon - bounds.minLon);
-    const latitude = bounds.maxLat - ((y - 45) / 280) * (bounds.maxLat - bounds.minLat);
-    setForm((current) => ({ ...current, latitude: latitude.toFixed(5), longitude: longitude.toFixed(5) }));
+    const x = ((event.clientX - rect.left) / rect.width) * 900 + originX;
+    const y = ((event.clientY - rect.top) / rect.height) * 370 + originY;
+    const coordinates = unprojectWorld(x, y);
+    setForm((current) => ({ ...current, city: mapCity, latitude: coordinates.latitude.toFixed(5), longitude: coordinates.longitude.toFixed(5) }));
     setMapPick(false);
     setMessage('Координаты точки выбраны на карте.');
   };
@@ -128,30 +173,37 @@ export function NetworkWorkspace({ pvzList }: WorkspaceProps) {
     <div className="workspace-intro"><div><span className="workspace-kicker">ОПЕРАТОР · ГЕОГРАФИЯ</span><h1>Сеть пунктов и складов</h1><p>Добавляйте точки, задавайте их координаты и связывайте дорожными рёбрами для расчёта маршрутов.</p></div><div className="workspace-mini-stats"><div><strong>{map.locations.filter((x) => !x.is_hub).length}</strong><span>ПВЗ</span></div><div><strong>{map.locations.filter((x) => x.is_hub).length}</strong><span>Склады</span></div><div><strong>{map.edges.length}</strong><span>Дорог</span></div></div></div>
 
     <Panel title="Карта сети Mesh" subtitle="Схематичная карта узлов. Нажмите «Выбрать точку на карте», затем кликните, чтобы задать координаты нового объекта.">
-      <div className="network-map-toolbar"><span><i className="map-dot map-dot-pvz" /> Пункт выдачи <i className="map-dot map-dot-hub" /> Склад / хаб <i className="map-line" /> Дорога</span><button className={'workspace-button ' + (mapPick ? 'is-selected' : '')} onClick={() => setMapPick(!mapPick)}>{mapPick ? 'Отменить выбор точки' : 'Выбрать точку на карте'}</button></div>
+      <div className="network-map-toolbar">
+        <span><i className="map-dot map-dot-pvz" /> Пункт выдачи <i className="map-dot map-dot-hub" /> Склад / хаб <i className="map-line" /> Дорога</span>
+        <div className="network-map-actions">
+          <select value={mapCity} onChange={(event) => setMapCity(event.target.value)} aria-label="Город на карте">{mapCities.map((city) => <option key={city} value={city}>{city}</option>)}</select>
+          <button className={'workspace-button ' + (mapPick ? 'is-selected' : '')} onClick={() => setMapPick(!mapPick)}>{mapPick ? 'Отменить выбор точки' : 'Выбрать точку на карте'}</button>
+        </div>
+      </div>
       <div className={'network-map-canvas ' + (mapPick ? 'map-is-picking' : '')}>
-        <svg viewBox="0 0 900 370" role="img" aria-label="Карта пунктов выдачи и складов" onClick={pickCoordinates}>
-          <defs><pattern id="map-grid" width="34" height="34" patternUnits="userSpaceOnUse"><path d="M 34 0 L 0 0 0 34" fill="none" stroke="#e8edf3" strokeWidth="1" /></pattern></defs>
-          <rect width="900" height="370" fill="url(#map-grid)" />
-          <path d="M0 292 C180 235 215 355 390 258 S640 150 900 230" stroke="#d5e9e6" strokeWidth="22" fill="none" opacity=".55" />
-          <path d="M-20 93 C120 145 225 105 310 155 S510 265 720 110 S850 85 930 125" stroke="#e7e1d7" strokeWidth="15" fill="none" opacity=".5" />
+        <div className="network-map-tiles" aria-hidden="true">
+          {tileData.map((tile) => <img key={tile.key} src={tile.url} alt="" draggable={false} style={{ left: tile.left, top: tile.top }} />)}
+        </div>
+        <svg viewBox="0 0 900 370" role="img" aria-label={'Карта пунктов выдачи и складов города ' + mapCity} onClick={pickCoordinates}>
           {map.edges.map((edge) => {
-            const from = map.locations.find((node) => node.id === edge.from_pvz_id);
-            const to = map.locations.find((node) => node.id === edge.to_pvz_id);
+            const from = cityLocations.find((node) => node.id === edge.from_pvz_id);
+            const to = cityLocations.find((node) => node.id === edge.to_pvz_id);
             if (!from || !to) return null;
             const a = point(from), b = point(to);
-            return <g key={edge.id}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#9ba7b9" strokeWidth="2.5" strokeDasharray="7 5" /><text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 7} fill="#748198" fontSize="11" textAnchor="middle">{edge.distance_km} км</text></g>;
+            return <g key={edge.id}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#34445e" strokeWidth="3" strokeDasharray="8 6" opacity=".8" /><rect x={(a.x + b.x) / 2 - 20} y={(a.y + b.y) / 2 - 18} width="40" height="18" rx="8" fill="#fff" opacity=".93" /><text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 5} fill="#34445e" fontSize="10" fontWeight="700" textAnchor="middle">{edge.distance_km} км</text></g>;
           })}
-          {map.locations.map((node) => {
+          {cityLocations.map((node) => {
             const p = point(node);
             return <g key={node.id} className="map-node">
-              <circle cx={p.x} cy={p.y} r={node.is_hub ? 16 : 13} fill={node.is_hub ? '#1e2a43' : '#b31389'} stroke="#fff" strokeWidth="4" />
+              <circle cx={p.x} cy={p.y} r={node.is_hub ? 17 : 14} fill={node.is_hub ? '#1e2a43' : '#b31389'} stroke="#fff" strokeWidth="4" />
               <text x={p.x} y={p.y + 4} textAnchor="middle" fill="#fff" fontSize="11" fontWeight="700">{node.is_hub ? 'С' : 'П'}</text>
-              <text x={p.x} y={p.y + 31} textAnchor="middle" fill="#30394d" fontSize="12" fontWeight="650">{node.city} · #{node.id}</text>
+              <rect x={p.x - 49} y={p.y + 20} width="98" height="19" rx="8" fill="#fff" opacity=".95" />
+              <text x={p.x} y={p.y + 33} textAnchor="middle" fill="#30394d" fontSize="10" fontWeight="700">{node.is_hub ? 'Склад' : 'ПВЗ'} · #{node.id}</text>
             </g>;
           })}
-          {mapPick && <text x="450" y="25" textAnchor="middle" fill="#a10e7e" fontSize="13" fontWeight="700">Кликните в нужном месте карты</text>}
+          {mapPick && <text x="450" y="25" textAnchor="middle" fill="#a10e7e" stroke="#fff" strokeWidth="4" paintOrder="stroke" fontSize="13" fontWeight="700">Кликните в нужном месте карты</text>}
         </svg>
+        <div className="map-attribution">© OpenStreetMap contributors</div>
       </div>
       <div className="map-location-list">{map.locations.map((node) => <div key={node.id} className="map-location-item"><span className={'map-location-type ' + (node.is_hub ? 'hub' : '')}>{node.is_hub ? 'С' : 'П'}</span><div><strong>{node.city}, {node.address}</strong><small>{node.storage_capacity_m3} м³ · занято {node.occupied_volume_m3} м³</small></div><span className={node.is_mesh_enabled ? 'mesh-enabled' : 'mesh-disabled'}>{node.is_mesh_enabled ? 'Mesh включён' : 'Вне Mesh'}</span></div>)}</div>
     </Panel>
