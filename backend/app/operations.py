@@ -235,6 +235,9 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
         for returned in returned_items:
             returned.pvz_id = buyer_pvz.id
             _stock_transition(db, returned, "RETURNED", order.id)
+        # SessionLocal uses autoflush=False: flush status changes before
+        # _create_transfer queries for RETURNED rows.
+        db.flush()
         if keep_at_buyer:
             for returned in returned_items:
                 _stock_transition(db, returned, "STORED", order.id)
