@@ -261,10 +261,19 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
         volume = _volume_m3(product)
         weekly_average = total / weeks
         target = max(1, math.ceil((weekly_average / 7) * (DEFAULT_LEAD_TIME_DAYS + DEFAULT_SAFETY_DAYS)))
+        current_rows = db.query(StockItem).filter(
+            StockItem.pvz_id == pvz.id,
+            StockItem.product_id == product.id,
+            StockItem.status.in_(ACTIVE_STOCK),
+        ).all()
+        current_qty = sum(item.qty for item in current_rows)
+        remaining_need = max(target - current_qty, 0)
         possible = math.floor(free / volume) if volume > 0 else 0
         max_category_volume = category_volume_limit(product)
-        if volume > max_category_volume:
+        size_ok = volume <= max_category_volume
+        if not size_ok:
             possible = 0
+        replenishment_qty = max(0, min(remaining_need, possible))
         candidates.append({
             "product_id": product.id,
             "name": product.name,
@@ -278,13 +287,16 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
                 "width": product.width_cm,
                 "height": product.height_cm,
             },
+            "current_qty": current_qty,
             "recommended_qty": target,
-            "allocatable_qty": max(0, min(target, possible)),
+            "remaining_need_qty": remaining_need,
+            "allocatable_qty": replenishment_qty,
+            "eligible_size": size_ok,
             "excluded_reason": (
-                "Крупногабаритный товар: объём упаковки превышает лимит ПВЗ"
-                if volume > MAX_PVZ_ITEM_VOLUME_M3
-                else "Недостаточно свободного объёма"
-                if possible < 1
+                "Крупногабаритный товар: превышен лимит объёма для категории"
+                if not size_ok
+                else "Недостаточно свободного объёма для пополнения"
+                if replenishment_qty < remaining_need
                 else None
             ),
         })
@@ -298,12 +310,12 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
     for row in candidates:
         if len(selected) >= 5:
             break
-        if row["allocatable_qty"] <= 0:
+        if not row["eligible_size"] or (row["current_qty"] <= 0 and row["allocatable_qty"] <= 0):
             continue
         row_volume = row["allocatable_qty"] * row["volume_m3"]
         if reserved_volume + row_volume > free:
             row["allocatable_qty"] = max(0, math.floor((free - reserved_volume) / row["volume_m3"]))
-            row["excluded_reason"] = "Недостаточно свободного объёма для полного запаса"
+            row["excluded_reason"] = "Недостаточно свободного объёма для пополнения"
             if row["allocatable_qty"] <= 0:
                 continue
             row_volume = row["allocatable_qty"] * row["volume_m3"]
@@ -335,6 +347,7 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
             "lead_time_days": DEFAULT_LEAD_TIME_DAYS,
             "safety_days": DEFAULT_SAFETY_DAYS,
             "max_item_volume_m3": MAX_PVZ_ITEM_VOLUME_M3,
+            "category_volume_limits_m3": CATEGORY_MAX_VOLUME_M3,
         },
     }
 
