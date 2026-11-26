@@ -118,7 +118,7 @@ export function ReturnsWorkspace({ selectedPvzId, pvzList, onRefresh }: Props) {
             <option value="">Выберите выданный заказ</option>
             {availableOrders.map((row) => <option key={row.id} value={row.id}>#{row.id} · товар #{row.product_id} · {row.qty} шт. · ПВЗ #{row.buyer_pvz_id}</option>)}
           </select></label>
-          <label>Состояние товара<select value={condition} onChange={(e) => setCondition(e.target.value)}>
+          <label>Состояние товара<select value={condition} onChange={(e) => setCondition(e.target.value as 'intact' | 'damaged')}>
             <option value="intact">Целый, пригоден к повторной продаже</option>
             <option value="damaged">Повреждён</option>
           </select></label>
