@@ -554,8 +554,6 @@ def network_map(db: Session = Depends(get_db)):
 
 @router.post("/network/pvz")
 def create_pvz(body: PVZCreate, db: Session = Depends(get_db)):
-    if body.is_hub and db.query(PVZ).filter(PVZ.is_hub.is_(True)).first():
-        raise HTTPException(409, "Хаб уже создан. Сначала отключите текущий хаб.")
     pvz = PVZ(**body.model_dump())
     db.add(pvz)
     db.commit()
@@ -569,10 +567,6 @@ def update_pvz(pvz_id: int, body: PVZUpdate, db: Session = Depends(get_db)):
     if not pvz:
         raise HTTPException(404, "ПВЗ или склад не найден")
     changes = body.model_dump(exclude_unset=True)
-    if changes.get("is_hub"):
-        other_hub = db.query(PVZ).filter(PVZ.is_hub.is_(True), PVZ.id != pvz.id).first()
-        if other_hub:
-            raise HTTPException(409, "В сети может быть только один основной хаб")
     for key, value in changes.items():
         setattr(pvz, key, value)
     _refresh_waiting_transfers(db)
@@ -978,19 +972,27 @@ def customer_availability(
         StockItem.status == "STORED",
         StockItem.qty > 0,
     ).all()
-    available = []
+    quantities: dict[int, int] = {}
     for stock in stocks:
-        location = db.query(PVZ).filter(PVZ.id == stock.pvz_id).first()
+        quantities[stock.pvz_id] = quantities.get(stock.pvz_id, 0) + stock.qty
+
+    available = []
+    for location_id, quantity in quantities.items():
+        location = db.query(PVZ).filter(PVZ.id == location_id).first()
         if not location or location.is_hub:
             continue
-        distance = 0.0 if location.id == selected.id else _distance_km(selected, location)
+        _, road_distance = shortest_path(db, selected.id, location.id)
+        distance = 0.0 if location.id == selected.id else (
+            road_distance if road_distance is not None else _distance_km(selected, location)
+        )
         if distance <= radius_km:
             available.append({
                 "pvz_id": location.id,
                 "city": location.city,
                 "address": location.address,
-                "qty": stock.qty,
+                "qty": quantity,
                 "distance_km": round(distance, 1),
+                "distance_type": "road" if road_distance is not None else "approximate",
                 "is_selected": location.id == selected.id,
                 "can_pick_up_now": True,
             })
