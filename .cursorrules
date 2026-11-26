@@ -1,0 +1,95 @@
+# Mesh MVP — правила проекта
+stack:
+  backend: FastAPI + SQLAlchemy + SQLite + Pydantic
+  frontend: React + Vite + TypeScript (2 SPA: /pvz /seller + /analytics)
+  tests: pytest
+  docker: docker-compose с backend+frontend
+language: русский в UI и документации, английский в коде/полях
+style: минимализм, без лишних абстракций, всё в одном файле на модуль
+
+entities:
+  Seller: [id, name, commission_rate]
+  PVZ: [id, city, address, capacity_units, reserve_pct, peak_factor,
+        intake_fee, storage_rate_day, assembly_fee, local_bonus]
+  Product: [id, seller_id, sku, name, price, category]
+  StockItem: [id, product_id, pvz_id, qty, status, accepted_at,
+              ttl_days, storage_deadline, top_flag, last_top_check]
+  Order: [id, product_id, qty, buyer_city, buyer_pvz_id, status,
+          chosen_route_id, created_at]
+  RouteOption: [id, order_id, type(local|hub), cost, eta_days, distance_km,
+                pvz_income, marketplace_margin, seller_payout,
+                feasible, reject_reason]
+  Accrual: [id, pvz_id, order_id, stock_item_id, type, amount]
+  Return: [id, order_id, reason, condition, decision, created_at]
+  CapacityReservation: [id, pvz_id, units, source, expires_at]
+
+statuses:
+  StockItem: [ACCEPTED, STORED, RESERVED, ASSEMBLED, ISSUED,
+              RETURNED, RELOCATED, TO_HUB, TO_SELLER, EXPIRED, DAMAGED]
+  Order: [CREATED, ROUTE_SELECTED, RESERVED, ASSEMBLED, IN_TRANSIT,
+          READY, ISSUED, CANCELLED, RETURNED, FAILED_ROUTE]
+
+tariffs:
+  STORAGE_PER_UNIT_DAY: 5.0
+  INTAKE_FEE: 15.0
+  ASSEMBLY_FEE: 20.0
+  LOCAL_BASE: 80.0
+  LOCAL_PER_KM: 6.0
+  HUB_BASE: 120.0
+  HUB_PER_KM: 3.5
+  HUB_PROCESSING: 40.0
+  COMMISSION_RATE: 0.15
+  LOCAL_BONUS: 10.0
+  TTL_COEF: 1.5
+  TTL_MIN: 2
+  TTL_MAX: 14
+  TOP_RECHECK_DAYS: 5
+  RESERVE_PCT: 0.20
+
+formulas:
+  storage_fee: ceil(days_stored) * STORAGE_PER_UNIT_DAY * qty
+  local_cost: LOCAL_BASE + LOCAL_PER_KM*dist + ASSEMBLY_FEE
+  hub_cost: HUB_BASE + HUB_PER_KM*dist + HUB_PROCESSING
+  pvz_income_local: INTAKE_FEE*qty + storage_fee + ASSEMBLY_FEE + LOCAL_BONUS
+  pvz_income_hub: INTAKE_FEE*qty + storage_fee + ASSEMBLY_FEE
+  marketplace_margin: COMMISSION_RATE*price - route_cost - pvz_income
+  seller_payout: price - COMMISSION_RATE*price - storage_fee
+  ttl_days: clamp(round(avg_interval*TTL_COEF), TTL_MIN, TTL_MAX)
+  capacity_ok: occupied + incoming <= capacity_units*(1-RESERVE_PCT)
+
+routing_local_feasible:
+  - top_flag == true
+  - capacity_ok
+  - eta_local <= eta_hub - 0.5
+  - marketplace_cost_local <= marketplace_cost_hub
+  - иначе reject_reason
+
+api:
+  - POST /pvz/{id}/intake
+  - GET  /pvz/{id}/stock
+  - GET  /pvz/{id}/capacity
+  - POST /orders
+  - GET  /orders/{id}/routes
+  - POST /orders/{id}/route
+  - POST /orders/{id}/assemble
+  - POST /orders/{id}/issue
+  - POST /orders/{id}/return
+  - POST /stock/{id}/relocate
+  - GET  /pvz/{id}/accruals
+  - GET  /seller/{id}/payouts
+  - GET  /analytics/compare?order_id=
+  - GET  /analytics/sensitivity
+
+demo_scenarios:
+  - city_local (сток на соседнем ПВЗ)
+  - hub_magistral (нет локального стока)
+  - return (товар цел → оставить/переместить)
+  - no_capacity (переполнен → fallback hub)
+  - long_storage (TTL истёк, TOP-перепроверка, возврат продавцу)
+
+rules:
+  - Все расчёты — в коде, никогда в фронте
+  - Каждый reject_reason виден в ответе API
+  - Каждое изменение статуса StockItem пишет Accrual
+  - Каждый эндпоинт покрыт pytest
+  - Не делать: платёжный шлюз, реальный хаб, клиентское приложение
