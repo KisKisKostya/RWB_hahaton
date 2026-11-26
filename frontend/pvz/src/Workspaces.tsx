@@ -129,8 +129,8 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         tiles.push({
           key: wrappedX + '-' + y,
           url: 'https://tile.openstreetmap.org/' + zoom + '/' + wrappedX + '/' + y + '.png',
-          left: x * 256 - originX,
-          top: y * 256 - originY,
+          left: ((x * 256 - originX) / 900) * 100 + '%',
+          top: ((y * 256 - originY) / 370) * 100 + '%',
         });
       }
     }
