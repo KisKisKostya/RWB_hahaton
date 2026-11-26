@@ -83,6 +83,12 @@ class TruckRouteCreate(BaseModel):
     is_active: bool = True
 
 
+class ProductDimensionsUpdate(BaseModel):
+    length_cm: float = Field(gt=0, le=2000)
+    width_cm: float = Field(gt=0, le=2000)
+    height_cm: float = Field(gt=0, le=2000)
+
+
 class SellerIntake(BaseModel):
     product_id: int
     qty: int = Field(ge=1)
@@ -581,6 +587,7 @@ def upload_weekly_demand(pvz_id: int, body: DemandBatch, db: Session = Depends(g
         raise HTTPException(404, "ПВЗ не найден")
     week_start = body.week_start or utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = week_start - timedelta(days=week_start.weekday())
+    submitted_ids = {row.product_id for row in body.rows}
     for row in body.rows:
         if not db.query(Product).filter(Product.id == row.product_id).first():
             raise HTTPException(404, f"Товар {row.product_id} не найден")
@@ -598,6 +605,15 @@ def upload_weekly_demand(pvz_id: int, body: DemandBatch, db: Session = Depends(g
                 week_start=week_start,
                 quantity=row.quantity,
             ))
+    # Treat a submitted weekly report as a full snapshot: omitted products
+    # have zero demand in the edited report.
+    previous_rows = db.query(WeeklyDemand).filter(
+        WeeklyDemand.pvz_id == pvz_id,
+        WeeklyDemand.week_start == week_start,
+    ).all()
+    for previous in previous_rows:
+        if previous.product_id not in submitted_ids:
+            previous.quantity = 0
     db.flush()
     assortment = calculate_assortment(db, pvz, sync_flags=True)
     transfers = plan_rebalancing(db)
@@ -619,6 +635,35 @@ def get_assortment(pvz_id: int, db: Session = Depends(get_db)):
     result = calculate_assortment(db, pvz, sync_flags=True)
     db.commit()
     return result
+
+
+@router.patch("/products/{product_id}/dimensions")
+def update_product_dimensions(
+    product_id: int,
+    body: ProductDimensionsUpdate,
+    db: Session = Depends(get_db),
+):
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(404, "Товар не найден")
+    product.length_cm = body.length_cm
+    product.width_cm = body.width_cm
+    product.height_cm = body.height_cm
+    db.flush()
+    for location in db.query(PVZ).filter(PVZ.is_mesh_enabled.is_(True)).all():
+        calculate_assortment(db, location, sync_flags=True)
+    plans = plan_rebalancing(db)
+    db.commit()
+    return {
+        "product_id": product.id,
+        "dimensions_cm": {
+            "length": product.length_cm,
+            "width": product.width_cm,
+            "height": product.height_cm,
+        },
+        "volume_m3": round(_volume_m3(product), 4),
+        "planned_transfers": [transfer.id for transfer in plans],
+    }
 
 
 @router.get("/network/transfers")
