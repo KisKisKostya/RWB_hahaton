@@ -63,6 +63,8 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [mapPick, setMapPick] = useState(false);
   const [mapCity, setMapCity] = useState('');
   const [selectedRouteId, setSelectedRouteId] = useState('');
+  const [editingStorageId, setEditingStorageId] = useState<number | null>(null);
+  const [storageDraft, setStorageDraft] = useState({ area: '20', height: '2.2' });
 
   const load = async () => {
     try {
@@ -75,7 +77,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
           to_pvz_id: current.to_pvz_id || String(result.locations[1].id),
         }));
       }
-      setMapCity((current) => current || result.locations[0]?.city || 'Казань');
+      setMapCity((current) => result.locations.some((location) => location.city === current) ? current : result.locations[0]?.city || 'Казань');
     } catch (error) { setMessage(jsonError(error)); }
   };
   useEffect(() => { load(); }, []);
@@ -145,6 +147,30 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     setForm((current) => ({ ...current, city: mapCity, latitude: coordinates.latitude.toFixed(5), longitude: coordinates.longitude.toFixed(5) }));
     setMapPick(false);
     setMessage('Координаты точки выбраны на карте.');
+  };
+
+  const editStorage = (node: Location) => {
+    setEditingStorageId(node.id);
+    setStorageDraft({
+      area: String(node.storage_area_m2 || 20),
+      height: String(node.storage_height_m || 2.2),
+    });
+  };
+
+  const saveStorage = async () => {
+    if (editingStorageId === null) return;
+    setBusy(true);
+    try {
+      await api.updatePvz(editingStorageId, {
+        storage_area_m2: Number(storageDraft.area),
+        storage_height_m: Number(storageDraft.height),
+      });
+      setMessage('Параметры объёма хранения сохранены.');
+      setEditingStorageId(null);
+      await load();
+      onRefresh?.();
+    } catch (error) { setMessage(jsonError(error)); }
+    finally { setBusy(false); }
   };
 
   const toggleMesh = async (node: Location) => {
@@ -235,7 +261,15 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         </svg>
         <div className="map-attribution">© OpenStreetMap contributors</div>
       </div>
-      <div className="map-location-list">{map.locations.map((node) => <div key={node.id} className="map-location-item"><span className={'map-location-type ' + (node.is_hub ? 'hub' : '')}>{node.is_hub ? 'С' : 'П'}</span><div><strong>{node.city}, {node.address}</strong><small>{node.storage_capacity_m3} м³ · занято {node.occupied_volume_m3} м³</small></div><label className="mesh-toggle"><input type="checkbox" checked={Boolean(node.is_mesh_enabled)} onChange={() => toggleMesh(node)} disabled={busy} /><span>{node.is_mesh_enabled ? 'Mesh включён' : 'Вне Mesh'}</span></label></div>)}</div>
+      <div className="map-location-list">{map.locations.map((node) => <div key={node.id} className="map-location-item"><span className={'map-location-type ' + (node.is_hub ? 'hub' : '')}>{node.is_hub ? 'С' : 'П'}</span><div><strong>{node.city}, {node.address}</strong><small>{node.storage_capacity_m3} м³ · занято {node.occupied_volume_m3} м³</small></div><button className="workspace-button storage-edit-button" onClick={() => editStorage(node)}>Ёмкость</button><label className="mesh-toggle"><input type="checkbox" checked={Boolean(node.is_mesh_enabled)} onChange={() => toggleMesh(node)} disabled={busy} /><span>{node.is_mesh_enabled ? 'Mesh включён' : 'Вне Mesh'}</span></label></div>)}</div>
+      {editingStorageId !== null && <div className="storage-edit-panel">
+        <strong>Параметры хранения · ПВЗ #{editingStorageId}</strong>
+        <div className="workspace-form-grid">
+          <label>Площадь, м²<input type="number" min="0.1" step="0.1" value={storageDraft.area} onChange={(event) => setStorageDraft({ ...storageDraft, area: event.target.value })} /></label>
+          <label>Высота, м<input type="number" min="0.1" step="0.1" value={storageDraft.height} onChange={(event) => setStorageDraft({ ...storageDraft, height: event.target.value })} /></label>
+        </div>
+        <div className="storage-edit-actions"><button className="workspace-button" onClick={() => setEditingStorageId(null)}>Отмена</button><button className="workspace-button primary" onClick={saveStorage} disabled={busy}>Сохранить объём</button></div>
+      </div>}
     </Panel>
 
     <div className="workspace-two-col">
