@@ -40,6 +40,7 @@ export const api = {
   customerAvailability: (productId: number, pvzId: number, radiusKm: number) => request('/customer/availability?product_id=' + productId + '&pvz_id=' + pvzId + '&radius_km=' + radiusKm),
   createCustomerOrder: (data: unknown, customerId = 1) => request('/customer/orders?customer_id=' + customerId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getCustomerOrders: (id: number) => request('/customer/orders/' + id),
+  confirmCustomerPickup: (orderId: number, customerId = 1) => request('/customer/orders/' + orderId + '/pickup?customer_id=' + customerId, { method: 'POST' }),
   intake: (pvzId: number, data: { product_id: number; qty: number; top_flag?: boolean }) =>
     request('/pvz/' + pvzId + '/intake', {
       method: 'POST',
