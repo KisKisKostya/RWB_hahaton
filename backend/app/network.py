@@ -478,19 +478,26 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
                     "demand_rebalance",
                 )
             else:
-                hub = db.query(PVZ).filter(
+                if source.is_hub:
+                    continue
+                hubs = db.query(PVZ).filter(
                     PVZ.is_hub.is_(True),
                     PVZ.is_mesh_enabled.is_(True),
                     PVZ.id != source.id,
-                ).first()
-                transfer = _create_transfer(
-                    db,
-                    product.id,
-                    source_qty,
-                    source.id,
-                    hub.id,
-                    "no_local_demand",
-                ) if hub else None
+                ).all()
+                hub_choices = []
+                for hub in hubs:
+                    hub_free = _storage_capacity(hub) - _occupied_volume(db, hub.id)
+                    fit_qty = min(source_qty, max(0, math.floor(hub_free / _volume_m3(product))))
+                    if fit_qty > 0:
+                        hub_choices.append((hub_free, hub, fit_qty))
+                if hub_choices:
+                    _, hub, fit_qty = max(hub_choices, key=lambda row: row[0])
+                    transfer = _create_transfer(
+                        db, product.id, fit_qty, source.id, hub.id, "no_local_demand"
+                    )
+                else:
+                    transfer = None
             if transfer:
                 plans.append(transfer)
     db.flush()
