@@ -116,9 +116,11 @@ def reserved_units(db: Session, pvz_id: int) -> int:
 def capacity_snapshot(db: Session, pvz: PVZ, incoming: int = 0) -> dict:
     occ = occupied_units(db, pvz.id)
     res = reserved_units(db, pvz.id)
-    usable = int(pvz.capacity_units * (1 - (pvz.reserve_pct or RESERVE_PCT)))
+    reserve = pvz.reserve_pct if pvz.reserve_pct is not None else RESERVE_PCT
+    usable = int(usable_capacity(pvz.capacity_units, reserve))
     free = max(usable - occ - res, 0)
-    ok = occ + incoming + res <= usable
+    # occupied + reserved counts as already taken; incoming is new load
+    ok = check_capacity_ok(occ + res, incoming, pvz.capacity_units, reserve)
     return {
         "pvz_id": pvz.id,
         "capacity_units": pvz.capacity_units,
@@ -208,7 +210,7 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
     # --- local ---
     local_dist = 8.0
     local_eta = 0.5
-    local_cost = LOCAL_BASE + LOCAL_PER_KM * local_dist + ASSEMBLY_FEE
+    cost_local = local_cost(local_dist)
     local_reject = None
     local_feasible = True
     source_pvz_id = None
@@ -232,16 +234,16 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         if source_pvz.city == buyer_pvz.city:
             local_dist = max(3.0, abs(source_pvz.id - buyer_pvz.id) * 2.5)
         local_eta = 0.3 + local_dist / 80.0
-        local_cost = LOCAL_BASE + LOCAL_PER_KM * local_dist + ASSEMBLY_FEE
+        cost_local = local_cost(local_dist)
 
-    pvz_income_local = INTAKE_FEE * order.qty + stor + ASSEMBLY_FEE + LOCAL_BONUS
-    seller_payout = product.price * order.qty - COMMISSION_RATE * product.price * order.qty - stor
-    margin_local = COMMISSION_RATE * product.price * order.qty - local_cost - pvz_income_local
+    income_local = pvz_income_local(order.qty, stor)
+    payout_local = seller_payout(product.price * order.qty, stor)
+    margin_local = marketplace_margin(product.price * order.qty, cost_local, income_local)
 
     # --- hub ---
     hub_dist = 800.0
     hub_eta = 2.0
-    hub_cost = HUB_BASE + HUB_PER_KM * hub_dist + HUB_PROCESSING
+    cost_hub = hub_cost(hub_dist)
     hub_source_id = None
     hub_stor = 0.0
     hub_feasible = True
@@ -254,7 +256,7 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         hub_source_id = hub.id
         hub_dist = haversine_km(hub.city, buyer_pvz.city)
         hub_eta = 1.5 + hub_dist / 400.0
-        hub_cost = HUB_BASE + HUB_PER_KM * hub_dist + HUB_PROCESSING
+        cost_hub = hub_cost(hub_dist)
         # stock at hub for this product (optional)
         hub_item = (
             db.query(StockItem)
@@ -271,30 +273,28 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
             # still feasible via hub magistral (inbound)
             hub_stor = 0.0
 
-    pvz_income_hub = INTAKE_FEE * order.qty + hub_stor + ASSEMBLY_FEE
-    seller_payout_hub = (
-        product.price * order.qty - COMMISSION_RATE * product.price * order.qty - hub_stor
-    )
-    margin_hub = COMMISSION_RATE * product.price * order.qty - hub_cost - pvz_income_hub
+    income_hub = pvz_income_hub(order.qty, hub_stor)
+    payout_hub = seller_payout(product.price * order.qty, hub_stor)
+    margin_hub = marketplace_margin(product.price * order.qty, cost_hub, income_hub)
 
     # local feasibility vs hub
     if local_feasible and local_item:
         if local_eta > hub_eta - 0.5:
             local_feasible = False
             local_reject = "eta_local_worse_than_hub"
-        elif local_cost > hub_cost:
+        elif cost_local > cost_hub:
             local_feasible = False
             local_reject = "local_cost_worse_than_hub"
 
     local_opt = RouteOption(
         order_id=order.id,
         type="local",
-        cost=round(local_cost, 2),
+        cost=round(cost_local, 2),
         eta_days=round(local_eta, 2),
         distance_km=round(local_dist, 2),
-        pvz_income=round(pvz_income_local, 2),
+        pvz_income=round(income_local, 2),
         marketplace_margin=round(margin_local, 2),
-        seller_payout=round(seller_payout, 2),
+        seller_payout=round(payout_local, 2),
         feasible=local_feasible,
         reject_reason=local_reject,
         source_pvz_id=source_pvz_id,
@@ -302,12 +302,12 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
     hub_opt = RouteOption(
         order_id=order.id,
         type="hub",
-        cost=round(hub_cost, 2),
+        cost=round(cost_hub, 2),
         eta_days=round(hub_eta, 2),
         distance_km=round(hub_dist, 2),
-        pvz_income=round(pvz_income_hub, 2),
+        pvz_income=round(income_hub, 2),
         marketplace_margin=round(margin_hub, 2),
-        seller_payout=round(seller_payout_hub, 2),
+        seller_payout=round(payout_hub, 2),
         feasible=hub_feasible,
         reject_reason=hub_reject,
         source_pvz_id=hub_source_id,
