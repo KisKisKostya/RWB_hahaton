@@ -30,6 +30,13 @@ router = APIRouter(tags=["network", "demand", "customer"])
 ACTIVE_STOCK = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED")
 TRANSFER_PENDING = ("WAITING_ROUTE", "READY_ON_ROUTE")
 MAX_PVZ_ITEM_VOLUME_M3 = 0.08
+CATEGORY_MAX_VOLUME_M3 = {
+    "одежда": 0.025,
+    "электроника": 0.06,
+    "дом": 0.08,
+    "красота": 0.02,
+    "спорт": 0.06,
+}
 DEFAULT_LEAD_TIME_DAYS = 2
 DEFAULT_SAFETY_DAYS = 1
 
@@ -127,6 +134,10 @@ def _coords(pvz: PVZ) -> tuple[float, float]:
         float(pvz.latitude if pvz.latitude is not None else center[0] + offset),
         float(pvz.longitude if pvz.longitude is not None else center[1] + offset * 1.4),
     )
+
+
+def category_volume_limit(product: Product) -> float:
+    return CATEGORY_MAX_VOLUME_M3.get((product.category or "").strip().lower(), MAX_PVZ_ITEM_VOLUME_M3)
 
 
 def _volume_m3(product: Product) -> float:
@@ -251,7 +262,8 @@ def calculate_assortment(db: Session, pvz: PVZ, sync_flags: bool = False) -> dic
         weekly_average = total / weeks
         target = max(1, math.ceil((weekly_average / 7) * (DEFAULT_LEAD_TIME_DAYS + DEFAULT_SAFETY_DAYS)))
         possible = math.floor(free / volume) if volume > 0 else 0
-        if volume > MAX_PVZ_ITEM_VOLUME_M3:
+        max_category_volume = category_volume_limit(product)
+        if volume > max_category_volume:
             possible = 0
         candidates.append({
             "product_id": product.id,
@@ -750,7 +762,7 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         if weekly <= 0:
             continue
         free = _storage_capacity(location) - _occupied_volume(db, location.id)
-        if _volume_m3(product) * body.qty <= free and _volume_m3(product) <= MAX_PVZ_ITEM_VOLUME_M3:
+        if _volume_m3(product) * body.qty <= free and _volume_m3(product) <= category_volume_limit(product):
             candidates.append((weekly, free, location))
     hub = db.query(PVZ).filter(PVZ.is_hub.is_(True)).first()
     if candidates:
@@ -911,6 +923,21 @@ def create_customer_order(body: CustomerOrderCreate, customer_id: int = Query(de
     ).first()
     if not stock:
         raise HTTPException(409, "В выбранном ПВЗ недостаточно товара для немедленной выдачи")
+    stock.qty -= body.qty
+    if stock.qty == 0:
+        stock.status = "RELOCATED"
+    reserved_stock = StockItem(
+        product_id=product.id,
+        pvz_id=location.id,
+        qty=body.qty,
+        status="RESERVED",
+        accepted_at=stock.accepted_at,
+        ttl_days=stock.ttl_days,
+        storage_deadline=stock.storage_deadline,
+        top_flag=stock.top_flag,
+        last_top_check=stock.last_top_check,
+    )
+    db.add(reserved_stock)
     order = Order(
         product_id=product.id,
         qty=body.qty,
@@ -931,6 +958,34 @@ def create_customer_order(body: CustomerOrderCreate, customer_id: int = Query(de
         "pickup_address": _pvz_label(location),
         "message": "Заказ оформлен. Товар уже находится в выбранном пункте.",
     }
+
+
+@router.post("/customer/orders/{order_id}/pickup")
+def confirm_customer_pickup(
+    order_id: int,
+    customer_id: int = Query(default=1),
+    db: Session = Depends(get_db),
+):
+    order = db.query(Order).filter(
+        Order.id == order_id,
+        Order.customer_id == customer_id,
+    ).first()
+    if not order:
+        raise HTTPException(404, "Заказ не найден")
+    if order.status != "READY":
+        raise HTTPException(409, "Заказ не готов к выдаче")
+    reserved_stock = db.query(StockItem).filter(
+        StockItem.product_id == order.product_id,
+        StockItem.pvz_id == order.buyer_pvz_id,
+        StockItem.status == "RESERVED",
+        StockItem.qty >= order.qty,
+    ).order_by(StockItem.id.desc()).first()
+    if not reserved_stock:
+        raise HTTPException(409, "Резерв товара не найден")
+    reserved_stock.status = "ISSUED"
+    order.status = "ISSUED"
+    db.commit()
+    return {"order_id": order.id, "status": order.status, "message": "Получение заказа подтверждено"}
 
 
 @router.get("/customer/orders/{customer_id}")
