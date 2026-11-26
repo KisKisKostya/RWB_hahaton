@@ -606,21 +606,36 @@ def issue(order_id: int, db: Session = Depends(get_db)):
     set_stock_status(db, item, "ISSUED", order_id=order.id)
 
     route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
+    source_pvz = db.query(PVZ).filter(PVZ.id == item.pvz_id).first()
     write_accrual(
         db,
         pvz_id=order.buyer_pvz_id,
         accrual_type="issue_intake",
         amount=INTAKE_FEE * order.qty,
         order_id=order.id,
+        stock_item_id=item.id,
     )
-    if route:
+    if source_pvz:
         write_accrual(
             db,
             pvz_id=order.buyer_pvz_id,
-            accrual_type="pvz_income",
-            amount=route.pvz_income,
+            accrual_type="storage_fee",
+            amount=storage_fee(item.accepted_at, order.qty, source_pvz.storage_rate_day),
             order_id=order.id,
+            stock_item_id=item.id,
         )
+    if route and route.type == "local":
+        write_accrual(
+            db,
+            pvz_id=order.buyer_pvz_id,
+            accrual_type="local_bonus",
+            amount=order.qty * (source_pvz.local_bonus if source_pvz else 0),
+            order_id=order.id,
+            stock_item_id=item.id,
+        )
+    db.query(CapacityReservation).filter(
+        CapacityReservation.source.like(f"order:{order.id}%")
+    ).delete(synchronize_session=False)
 
     db.commit()
     db.refresh(order)
