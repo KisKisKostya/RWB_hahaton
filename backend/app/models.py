@@ -91,6 +91,7 @@ class StockItem(Base):
     storage_deadline = Column(DateTime, nullable=True)
     top_flag = Column(Boolean, nullable=False, default=False)
     last_top_check = Column(DateTime, nullable=True)
+    transfer_id = Column(Integer, ForeignKey("inventory_transfers.id"), nullable=True)
 
     product = relationship("Product", back_populates="stock_items")
     pvz = relationship("PVZ", back_populates="stock_items")
@@ -267,6 +268,9 @@ def init_db() -> None:
             "length_cm": "FLOAT NOT NULL DEFAULT 10.0",
             "width_cm": "FLOAT NOT NULL DEFAULT 10.0",
             "height_cm": "FLOAT NOT NULL DEFAULT 10.0",
+        },
+        "stock_items": {
+            "transfer_id": "INTEGER REFERENCES inventory_transfers(id)",
         },
         "orders": {
             "customer_id": "INTEGER REFERENCES customers(id)",
