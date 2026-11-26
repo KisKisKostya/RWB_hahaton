@@ -258,6 +258,8 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
     buyer_pvz = db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
     if not product or not buyer_pvz:
         raise HTTPException(404, "product or buyer_pvz not found")
+    seller = db.query(Seller).filter(Seller.id == product.seller_id).first()
+    commission_rate = float(seller.commission_rate if seller else COMMISSION_RATE)
 
     db.query(RouteOption).filter(RouteOption.order_id == order.id).delete()
     db.flush()
@@ -274,17 +276,23 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         hub_source_id = hub.id
         hub_dist = haversine_km(hub.city, buyer_pvz.city)
         hub_eta = 1.5 + hub_dist / 400.0
-        hub_item = (
+        hub_items = (
             db.query(StockItem)
             .filter(
                 StockItem.product_id == order.product_id,
                 StockItem.pvz_id == hub.id,
                 StockItem.status.in_(["ACCEPTED", "STORED"]),
+                StockItem.qty > 0,
             )
-            .first()
+            .order_by(StockItem.accepted_at.asc())
+            .all()
         )
+        hub_item = hub_items[0] if hub_items else None
+        hub_stock_available = sum(row.qty for row in hub_items) >= order.qty
         if hub_item:
             hub_stor = storage_fee(hub_item.accepted_at, order.qty, hub.storage_rate_day)
+    else:
+        hub_stock_available = False
 
     hub_data = build_hub(
         dist=hub_dist,
@@ -293,7 +301,8 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         qty=order.qty,
         storage_fee=hub_stor,
         source_pvz_id=hub_source_id,
-        hub_available=hub is not None,
+        hub_available=hub is not None and hub_stock_available,
+        commission_rate=commission_rate,
     )
 
     # --- local ---
@@ -330,6 +339,7 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         hub_marketplace_cost=hub_data["marketplace_cost"],
         source_pvz_id=source_pvz_id,
         has_stock=has_stock,
+        commission_rate=commission_rate,
     )
 
     local_opt = RouteOption(
