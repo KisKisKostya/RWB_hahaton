@@ -959,8 +959,22 @@ def complete_transfer(transfer_id: int, db: Session = Depends(get_db)):
     transfer = db.query(InventoryTransfer).filter(InventoryTransfer.id == transfer_id).first()
     if not transfer:
         raise HTTPException(404, "Перемещение не найдено")
-    if transfer.status != "READY_ON_ROUTE":
-        raise HTTPException(409, "Перемещение ожидает подходящего действующего рейса")
+    if transfer.status != "READY_ON_ROUTE" or not transfer.route_id:
+        raise HTTPException(409, "Принимать можно только товар, назначенный на действующий рейс")
+    route = db.query(TruckRoute).filter(
+        TruckRoute.id == transfer.route_id,
+        TruckRoute.is_active.is_(True),
+    ).first()
+    if not route:
+        raise HTTPException(409, "Рейс товара остановлен или больше не существует")
+    route_stops = db.query(TruckRouteStop).filter(
+        TruckRouteStop.route_id == route.id
+    ).order_by(TruckRouteStop.sequence_no).all()
+    route_stop_ids = [stop.pvz_id for stop in route_stops]
+    if transfer.from_pvz_id not in route_stop_ids or transfer.to_pvz_id not in route_stop_ids:
+        raise HTTPException(409, "Точки перемещения не входят в выбранный рейс")
+    if route_stop_ids.index(transfer.from_pvz_id) >= route_stop_ids.index(transfer.to_pvz_id):
+        raise HTTPException(409, "Порядок остановок рейса не соответствует направлению доставки")
     source = db.query(PVZ).filter(PVZ.id == transfer.from_pvz_id).first()
     target = db.query(PVZ).filter(PVZ.id == transfer.to_pvz_id).first()
     product = db.query(Product).filter(Product.id == transfer.product_id).first()
