@@ -1014,35 +1014,46 @@ def create_customer_order(body: CustomerOrderCreate, customer_id: int = Query(de
     location = db.query(PVZ).filter(PVZ.id == body.buyer_pvz_id).first()
     if not customer or not product or not location:
         raise HTTPException(404, "Профиль, товар или ПВЗ не найден")
-    stock = db.query(StockItem).filter(
+    stock_rows = db.query(StockItem).filter(
         StockItem.product_id == product.id,
         StockItem.pvz_id == location.id,
         StockItem.status == "STORED",
-        StockItem.qty >= body.qty,
-    ).first()
-    if not stock:
+        StockItem.qty > 0,
+    ).order_by(StockItem.accepted_at).all()
+    if sum(row.qty for row in stock_rows) < body.qty:
         raise HTTPException(409, "В выбранном ПВЗ недостаточно товара для немедленной выдачи")
-    stock.qty -= body.qty
-    if stock.qty == 0:
-        stock.status = "RELOCATED"
+
+    remaining = body.qty
+    first_stock = stock_rows[0]
+    for row in stock_rows:
+        taken = min(row.qty, remaining)
+        row.qty -= taken
+        remaining -= taken
+        if row.qty == 0:
+            row.status = "RELOCATED"
+        if remaining <= 0:
+            break
+
     reserved_stock = StockItem(
         product_id=product.id,
         pvz_id=location.id,
         qty=body.qty,
         status="RESERVED",
-        accepted_at=stock.accepted_at,
-        ttl_days=stock.ttl_days,
-        storage_deadline=stock.storage_deadline,
-        top_flag=stock.top_flag,
-        last_top_check=stock.last_top_check,
+        accepted_at=first_stock.accepted_at,
+        ttl_days=first_stock.ttl_days,
+        storage_deadline=first_stock.storage_deadline,
+        top_flag=False,
+        last_top_check=utcnow(),
     )
     db.add(reserved_stock)
+    db.flush()
     order = Order(
         product_id=product.id,
         qty=body.qty,
         buyer_city=location.city,
         buyer_pvz_id=location.id,
         customer_id=customer.id,
+        reserved_stock_item_id=reserved_stock.id,
         status="READY",
     )
     db.add(order)
@@ -1074,11 +1085,9 @@ def confirm_customer_pickup(
     if order.status != "READY":
         raise HTTPException(409, "Заказ не готов к выдаче")
     reserved_stock = db.query(StockItem).filter(
-        StockItem.product_id == order.product_id,
-        StockItem.pvz_id == order.buyer_pvz_id,
+        StockItem.id == order.reserved_stock_item_id,
         StockItem.status == "RESERVED",
-        StockItem.qty >= order.qty,
-    ).order_by(StockItem.id.desc()).first()
+    ).first()
     if not reserved_stock:
         raise HTTPException(409, "Резерв товара не найден")
     reserved_stock.status = "ISSUED"
