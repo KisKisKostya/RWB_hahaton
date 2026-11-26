@@ -30,7 +30,7 @@ type Product = {
   height_cm?: number;
 };
 
-type NetworkMap = { locations: Location[]; edges: any[] };
+type NetworkMap = { locations: Location[]; edges: any[]; routes: any[] };
 type Assortment = { top_products: any[]; candidates: any[]; storage_capacity_m3: number; occupied_volume_m3: number; free_volume_m3: number };
 type WorkspaceProps = { selectedPvzId: number; pvzList: Location[]; onRefresh?: () => void };
 
@@ -53,7 +53,7 @@ function Message({ value, onClose }: { value: string; onClose: () => void }) {
 }
 
 export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
-  const [map, setMap] = useState<NetworkMap>({ locations: [], edges: [] });
+  const [map, setMap] = useState<NetworkMap>({ locations: [], edges: [], routes: [] });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [form, setForm] = useState({
@@ -63,11 +63,19 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [edgeForm, setEdgeForm] = useState({ from_pvz_id: String(pvzList[0]?.id || ''), to_pvz_id: String(pvzList[1]?.id || ''), distance_km: '5' });
   const [mapPick, setMapPick] = useState(false);
   const [mapCity, setMapCity] = useState('');
+  const [selectedRouteId, setSelectedRouteId] = useState('');
 
   const load = async () => {
     try {
       const result = await api.getNetworkMap();
       setMap(result);
+      if (result.locations.length > 1) {
+        setEdgeForm((current) => ({
+          ...current,
+          from_pvz_id: current.from_pvz_id || String(result.locations[0].id),
+          to_pvz_id: current.to_pvz_id || String(result.locations[1].id),
+        }));
+      }
       setMapCity((current) => current || result.locations[0]?.city || 'Казань');
     } catch (error) { setMessage(jsonError(error)); }
   };
@@ -140,6 +148,17 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
     setMessage('Координаты точки выбраны на карте.');
   };
 
+  const toggleMesh = async (node: Location) => {
+    setBusy(true);
+    try {
+      await api.updatePvz(node.id, { is_mesh_enabled: !node.is_mesh_enabled });
+      setMessage(!node.is_mesh_enabled ? 'Объект подключён к Mesh.' : 'Объект исключён из Mesh.');
+      await load();
+      onRefresh?.();
+    } catch (error) { setMessage(jsonError(error)); }
+    finally { setBusy(false); }
+  };
+
   const createLocation = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -180,6 +199,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         <span><i className="map-dot map-dot-pvz" /> Пункт выдачи <i className="map-dot map-dot-hub" /> Склад / хаб <i className="map-line" /> Дорога</span>
         <div className="network-map-actions">
           <select value={mapCity} onChange={(event) => setMapCity(event.target.value)} aria-label="Город на карте">{mapCities.map((city) => <option key={city} value={city}>{city}</option>)}</select>
+          <select value={selectedRouteId} onChange={(event) => setSelectedRouteId(event.target.value)} aria-label="Подсветить маршрут"><option value="">Все дороги</option>{map.routes.map((route) => <option key={route.id} value={String(route.id)}>{route.name}</option>)}</select>
           <button className={'workspace-button ' + (mapPick ? 'is-selected' : '')} onClick={() => setMapPick(!mapPick)}>{mapPick ? 'Отменить выбор точки' : 'Выбрать точку на карте'}</button>
         </div>
       </div>
@@ -195,6 +215,14 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
             const a = point(from), b = point(to);
             return <g key={edge.id}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#34445e" strokeWidth="3" strokeDasharray="8 6" opacity=".8" /><rect x={(a.x + b.x) / 2 - 20} y={(a.y + b.y) / 2 - 18} width="40" height="18" rx="8" fill="#fff" opacity=".93" /><text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 5} fill="#34445e" fontSize="10" fontWeight="700" textAnchor="middle">{edge.distance_km} км</text></g>;
           })}
+          {map.routes.filter((route) => !selectedRouteId || String(route.id) === selectedRouteId).map((route) => {
+            const points = route.stop_pvz_ids
+              .map((id: number) => cityLocations.find((node) => node.id === id))
+              .filter((node: Location | undefined): node is Location => Boolean(node))
+              .map((node: Location) => point(node));
+            if (points.length < 2) return null;
+            return <polyline key={route.id} points={points.map((p: { x: number; y: number }) => p.x + ',' + p.y).join(' ')} fill="none" stroke="#df43ad" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" opacity=".9" />;
+          })}
           {cityLocations.map((node) => {
             const p = point(node);
             return <g key={node.id} className="map-node">
@@ -208,7 +236,7 @@ export function NetworkWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         </svg>
         <div className="map-attribution">© OpenStreetMap contributors</div>
       </div>
-      <div className="map-location-list">{map.locations.map((node) => <div key={node.id} className="map-location-item"><span className={'map-location-type ' + (node.is_hub ? 'hub' : '')}>{node.is_hub ? 'С' : 'П'}</span><div><strong>{node.city}, {node.address}</strong><small>{node.storage_capacity_m3} м³ · занято {node.occupied_volume_m3} м³</small></div><span className={node.is_mesh_enabled ? 'mesh-enabled' : 'mesh-disabled'}>{node.is_mesh_enabled ? 'Mesh включён' : 'Вне Mesh'}</span></div>)}</div>
+      <div className="map-location-list">{map.locations.map((node) => <div key={node.id} className="map-location-item"><span className={'map-location-type ' + (node.is_hub ? 'hub' : '')}>{node.is_hub ? 'С' : 'П'}</span><div><strong>{node.city}, {node.address}</strong><small>{node.storage_capacity_m3} м³ · занято {node.occupied_volume_m3} м³</small></div><label className="mesh-toggle"><input type="checkbox" checked={Boolean(node.is_mesh_enabled)} onChange={() => toggleMesh(node)} disabled={busy} /><span>{node.is_mesh_enabled ? 'Mesh включён' : 'Вне Mesh'}</span></label></div>)}</div>
     </Panel>
 
     <div className="workspace-two-col">
@@ -266,7 +294,7 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
     if (!rows.length) { setMessage('Добавьте строки в формате: ID товара, количество за неделю.'); return; }
     setBusy(true);
     try {
-      const result = await api.uploadDemand(selectedPvzId, { week_start: weekStart, rows });
+      const result = await api.uploadDemand(selectedPvzId, { week_start: weekStart + "T00:00:00", rows });
       setAssortment(result.assortment);
       setMessage('Статистика сохранена. TOP-5 и потребность пересчитаны автоматически; создано перемещений: ' + result.planned_transfers.length + '.');
       onRefresh?.();
@@ -303,12 +331,12 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
           <div className="assortment-product"><strong>{item.name}</strong><small>{item.category} · {item.sku}</small></div>
           <div className="assortment-metric"><strong>{item.weekly_demand}</strong><small>продаж / нед.</small></div>
           <div className="assortment-metric"><strong>{item.volume_m3} м³</strong><small>объём единицы</small></div>
-          <div className="assortment-qty"><strong>{item.allocatable_qty} шт.</strong><small>рекомендуемый запас</small></div>
+          <div className="assortment-qty"><strong>{item.recommended_qty} шт.</strong><small>целевой запас</small></div><div className="assortment-metric"><strong>{item.current_qty} / {item.allocatable_qty}</strong><small>есть / пополнить</small></div>
         </div>)}
         {!assortment?.top_products?.length && <div className="workspace-empty">Пока нет статистики спроса. Загрузите недельный список покупок.</div>}
       </div>
     </Panel>
-    <Panel title="Отклонённые товары" subtitle="Не попали в TOP из-за габаритов, спроса или нехватки объёма">
+    <Panel title="Ограничения ассортимента" subtitle="Позиции, исключённые из TOP или ограниченные по объёму хранения">
       <div className="candidate-list">{(assortment?.candidates || []).filter((item: any) => item.excluded_reason).slice(0, 8).map((item: any) => <div key={item.product_id}><span>{item.name}</span><small>{item.excluded_reason}</small></div>)}{!assortment?.candidates?.some((item: any) => item.excluded_reason) && <div className="workspace-empty">Нет отклонённых товаров.</div>}</div>
     </Panel>
   </div>;
