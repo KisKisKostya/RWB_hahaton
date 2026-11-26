@@ -175,7 +175,7 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
   };
   useEffect(() => { load(); }, []);
 
-  const reportFailure = async (event: React.FormEvent) => {
+  const reportFailure = async (event: FormEvent) => {
     event.preventDefault();
     setBusyId(Number(transferId));
     try {
