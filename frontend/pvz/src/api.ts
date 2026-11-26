@@ -31,6 +31,7 @@ export const api = {
   shortestPath: (fromId: number, toId: number) => request('/network/shortest-path?from_pvz_id=' + fromId + '&to_pvz_id=' + toId),
   listTruckRoutes: () => request('/network/routes'),
   createTruckRoute: (data: unknown) => request('/network/routes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
+  getDemandHistory: (pvzId: number) => request('/network/demand/' + pvzId),
   uploadDemand: (pvzId: number, data: unknown) => request('/network/demand/' + pvzId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getAssortment: (pvzId: number) => request('/network/assortment/' + pvzId),
   listTransfers: () => request('/network/transfers'),
