@@ -33,6 +33,7 @@ from app.operations import (
     process_return,
     report_transfer_failure,
     resolve_incident,
+    run_stock_maintenance,
 )
 from app.routing import build_hub
 
@@ -333,3 +334,60 @@ def test_route_financials_accept_a_per_seller_commission_rate():
     )
     assert result["marketplace_margin"] == pytest.approx(120 - result["cost"] - result["pvz_income"])
     assert result["seller_payout"] == pytest.approx(880)
+
+
+
+def test_stock_maintenance_expires_old_lots_and_rechecks_stale_top_flags(db):
+    seller, pvz, product, order = make_order(db, status="CREATED")
+    expired = StockItem(
+        product_id=product.id, pvz_id=pvz.id, qty=2, status="STORED",
+        accepted_at=utcnow() - timedelta(days=12), ttl_days=7,
+        storage_deadline=utcnow() - timedelta(days=5),
+        last_top_check=utcnow() - timedelta(days=10),
+    )
+    stale_but_valid = StockItem(
+        product_id=product.id, pvz_id=pvz.id, qty=1, status="STORED",
+        accepted_at=utcnow() - timedelta(days=1), ttl_days=7,
+        storage_deadline=utcnow() + timedelta(days=6),
+        last_top_check=utcnow() - timedelta(days=10),
+    )
+    db.add_all([expired, stale_but_valid])
+    db.flush()
+
+    result = run_stock_maintenance(db)
+    db.flush()
+
+    assert result["expired_items"] == 1
+    assert result["expired_stock_item_ids"] == [expired.id]
+    assert result["top_rechecked_count"] == 1
+    assert result["top_rechecked_pvz_ids"] == [pvz.id]
+    assert expired.status == "EXPIRED"
+    assert stale_but_valid.status == "STORED"
+    assert stale_but_valid.last_top_check is not None
+    assert stale_but_valid.last_top_check > utcnow() - timedelta(minutes=1)
+    incident = db.query(InventoryIncident).filter(
+        InventoryIncident.stock_item_id == expired.id,
+        InventoryIncident.incident_type == "STOCK_EXPIRED",
+    ).one()
+    assert incident.status == "OPEN"
+
+    # Re-running maintenance does not create duplicate expiry incidents.
+    second = run_stock_maintenance(db)
+    db.flush()
+    assert second["expired_items"] == 0
+    assert db.query(InventoryIncident).filter(
+        InventoryIncident.stock_item_id == expired.id,
+        InventoryIncident.incident_type == "STOCK_EXPIRED",
+        InventoryIncident.status == "OPEN",
+    ).count() == 1
+
+    resolve_incident(
+        incident.id,
+        IncidentResolution(
+            resolution_note="Товар передан продавцу по акту",
+            mark_sent_to_seller=True,
+        ),
+        db,
+    )
+    assert expired.status == "TO_SELLER"
+    assert incident.status == "RESOLVED"
