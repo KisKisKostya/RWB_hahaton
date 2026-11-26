@@ -210,6 +210,9 @@ def _route_distance(db: Session, stop_ids: list[int]) -> Optional[float]:
 
 
 def _route_for_transfer(db: Session, from_id: int, to_id: int) -> tuple[Optional[int], Optional[float]]:
+    endpoints = db.query(PVZ).filter(PVZ.id.in_([from_id, to_id])).all()
+    if len(endpoints) != 2 or any(not location.is_mesh_enabled for location in endpoints):
+        return None, None
     routes = db.query(TruckRoute).filter(TruckRoute.is_active.is_(True)).all()
     choices: list[tuple[float, int]] = []
     for route in routes:
@@ -232,7 +235,6 @@ def _route_for_transfer(db: Session, from_id: int, to_id: int) -> tuple[Optional
         return None, None
     distance, route_id = min(choices)
     return route_id, distance
-
 
 def _demand_totals(db: Session, pvz_id: int, days: int = 28) -> tuple[dict[int, int], int]:
     cutoff = utcnow() - timedelta(days=days)
@@ -389,7 +391,10 @@ def _create_transfer(
 
 def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
     locations = db.query(PVZ).filter(PVZ.is_mesh_enabled.is_(True)).all()
-    assortments = {location.id: calculate_assortment(db, location, sync_flags=True) for location in locations}
+    assortments = {
+        location.id: calculate_assortment(db, location, sync_flags=True)
+        for location in locations
+    }
     plans = []
     for source in locations:
         items = db.query(StockItem).filter(
@@ -397,22 +402,53 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
             StockItem.status == "STORED",
             StockItem.qty > 0,
         ).all()
+        processed_products: set[int] = set()
         for item in items:
-            source_assortment = assortments[source.id]
-            top_ids = {row["product_id"] for row in source_assortment["top_products"]}
-            if item.product_id in top_ids:
+            if item.product_id in processed_products:
                 continue
+            processed_products.add(item.product_id)
+
+            pending_outbound = db.query(InventoryTransfer).filter(
+                InventoryTransfer.product_id == item.product_id,
+                InventoryTransfer.from_pvz_id == source.id,
+                InventoryTransfer.status.in_(TRANSFER_PENDING),
+            ).first()
+            if pending_outbound:
+                continue
+
+            source_top_ids = {
+                row["product_id"] for row in assortments[source.id]["top_products"]
+            }
+            if item.product_id in source_top_ids:
+                continue
+
             product = db.query(Product).filter(Product.id == item.product_id).first()
             if not product:
                 continue
+            source_qty = sum(
+                row.qty for row in db.query(StockItem).filter(
+                    StockItem.pvz_id == source.id,
+                    StockItem.product_id == product.id,
+                    StockItem.status == "STORED",
+                ).all()
+            )
+            if source_qty <= 0:
+                continue
+
             receiving = []
             for target in locations:
                 if target.id == source.id:
                     continue
-                target_rows = assortments[target.id]["top_products"]
-                desired = next((r for r in target_rows if r["product_id"] == product.id), None)
+                desired = next(
+                    (
+                        row for row in assortments[target.id]["top_products"]
+                        if row["product_id"] == product.id
+                    ),
+                    None,
+                )
                 if not desired:
                     continue
+
                 current = sum(
                     row.qty for row in db.query(StockItem).filter(
                         StockItem.pvz_id == target.id,
@@ -420,24 +456,45 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
                         StockItem.status.in_(ACTIVE_STOCK),
                     ).all()
                 )
-                deficit = max(desired["recommended_qty"] - current, 0)
+                planned_incoming = sum(
+                    row.qty for row in db.query(InventoryTransfer).filter(
+                        InventoryTransfer.product_id == product.id,
+                        InventoryTransfer.to_pvz_id == target.id,
+                        InventoryTransfer.status.in_(TRANSFER_PENDING),
+                    ).all()
+                )
+                deficit = max(desired["recommended_qty"] - current - planned_incoming, 0)
                 if deficit:
                     receiving.append((desired["weekly_demand"], target.id, deficit))
+
             if receiving:
                 _, target_id, deficit = max(receiving)
                 transfer = _create_transfer(
-                    db, product.id, min(item.qty, deficit), source.id, target_id, "demand_rebalance"
+                    db,
+                    product.id,
+                    min(source_qty, deficit),
+                    source.id,
+                    target_id,
+                    "demand_rebalance",
                 )
             else:
-                hub = db.query(PVZ).filter(PVZ.is_hub.is_(True), PVZ.id != source.id).first()
+                hub = db.query(PVZ).filter(
+                    PVZ.is_hub.is_(True),
+                    PVZ.is_mesh_enabled.is_(True),
+                    PVZ.id != source.id,
+                ).first()
                 transfer = _create_transfer(
-                    db, product.id, item.qty, source.id, hub.id, "no_local_demand"
+                    db,
+                    product.id,
+                    source_qty,
+                    source.id,
+                    hub.id,
+                    "no_local_demand",
                 ) if hub else None
             if transfer:
                 plans.append(transfer)
     db.flush()
     return plans
-
 
 def _refresh_waiting_transfers(db: Session) -> None:
     waiting = db.query(InventoryTransfer).filter(InventoryTransfer.status == "WAITING_ROUTE").all()
