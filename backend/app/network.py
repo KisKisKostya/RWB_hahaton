@@ -967,19 +967,60 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
     if not product:
         raise HTTPException(404, "Товар не найден")
 
+    origin = db.query(PVZ).filter(PVZ.id == body.origin_pvz_id).first() if body.origin_pvz_id else None
+    if body.origin_pvz_id and not origin:
+        raise HTTPException(404, "Не удалось принять поставку: выбранный пункт приёма не найден.")
+    if origin and not origin.is_mesh_enabled:
+        raise HTTPException(
+            409,
+            f"Нельзя принять поставку в точке «{_pvz_label(origin)}»: она отключена от Mesh. "
+            "Выберите ПВЗ или склад, подключённый к сети.",
+        )
+
     volume = _volume_m3(product)
-    candidates = []
-    for location in db.query(PVZ).filter(
+    needed_volume = volume * body.qty
+    if origin:
+        free_volume = max(_storage_capacity(origin) - _occupied_volume(db, origin.id), 0.0)
+        free_units = _free_units(db, origin)
+        if body.qty > free_units or needed_volume > free_volume:
+            reasons = []
+            if body.qty > free_units:
+                reasons.append(f"не хватает мест по количеству: нужно {body.qty} шт., свободно {free_units} шт.")
+            if needed_volume > free_volume:
+                reasons.append(
+                    f"не хватает объёма: нужно {needed_volume:.4f} м³, свободно {free_volume:.4f} м³."
+                )
+            raise HTTPException(
+                409,
+                f"Нельзя принять поставку в точке «{_pvz_label(origin)}»: {' '.join(reasons)} "
+                "Освободите место или выберите другой подключённый пункт.",
+            )
+
+    locations = db.query(PVZ).filter(
         PVZ.is_mesh_enabled.is_(True),
         PVZ.is_hub.is_(False),
-    ).all():
+    ).all()
+    candidates = []
+    pvz_reasons = []
+    for location in locations:
         demand, _ = _demand_totals(db, location.id)
         weekly = demand.get(product.id, 0)
-        if weekly <= 0 or volume > category_volume_limit(product):
-            continue
-        free = _storage_capacity(location) - _occupied_volume(db, location.id)
-        if volume * body.qty <= free and body.qty <= _free_units(db, location):
-            candidates.append((weekly, free, location))
+        free_volume = max(_storage_capacity(location) - _occupied_volume(db, location.id), 0.0)
+        free_units = _free_units(db, location)
+        if weekly <= 0:
+            pvz_reasons.append(f"ПВЗ #{location.id}: нет подтверждённого спроса на этот товар")
+        elif volume > category_volume_limit(product):
+            pvz_reasons.append(
+                f"ПВЗ #{location.id}: объём одной упаковки {volume:.4f} м³ превышает лимит категории "
+                f"{category_volume_limit(product):.4f} м³"
+            )
+        elif needed_volume > free_volume or body.qty > free_units:
+            pvz_reasons.append(
+                f"ПВЗ #{location.id}: недостаточно вместимости "
+                f"(нужно {body.qty} шт. / {needed_volume:.4f} м³, свободно {free_units} шт. / {free_volume:.4f} м³)"
+            )
+        else:
+            candidates.append((weekly, free_volume, location))
 
     if candidates:
         _, _, destination = max(candidates, key=lambda row: (row[0], row[1]))
@@ -989,23 +1030,35 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
             PVZ.is_hub.is_(True),
             PVZ.is_mesh_enabled.is_(True),
         ).all()
-        suitable_hubs = [
-            (_storage_capacity(hub) - _occupied_volume(db, hub.id), hub)
-            for hub in hubs
-            if volume * body.qty <= _storage_capacity(hub) - _occupied_volume(db, hub.id) and body.qty <= _free_units(db, hub)
-        ]
+        suitable_hubs = []
+        hub_reasons = []
+        for hub in hubs:
+            free_volume = max(_storage_capacity(hub) - _occupied_volume(db, hub.id), 0.0)
+            free_units = _free_units(db, hub)
+            if needed_volume <= free_volume and body.qty <= free_units:
+                suitable_hubs.append((free_volume, hub))
+            else:
+                hub_reasons.append(
+                    f"Хаб #{hub.id}: нужно {body.qty} шт. / {needed_volume:.4f} м³, "
+                    f"свободно {free_units} шт. / {free_volume:.4f} м³"
+                )
         if not suitable_hubs:
-            raise HTTPException(409, "Нет подключённого к Mesh склада с достаточным свободным объёмом")
+            details = pvz_reasons + hub_reasons
+            if not locations:
+                details.insert(0, "В сети нет подключённых ПВЗ для приёмки.")
+            if not hubs:
+                details.append("В сети нет подключённых хабов.")
+            explanation = " ".join(details) if details else "Нет доступной точки для размещения товара."
+            raise HTTPException(
+                409,
+                "Нельзя принять поставку: ни один ПВЗ или хаб не подходит. "
+                f"Причины: {explanation} Уменьшите количество, измените габариты или освободите место.",
+            )
         _, destination = max(suitable_hubs, key=lambda row: row[0])
         decision = "HUB"
 
-    origin = db.query(PVZ).filter(PVZ.id == body.origin_pvz_id).first() if body.origin_pvz_id else destination
-    if not origin:
-        raise HTTPException(404, "Пункт приёма продавца не найден")
-    if not origin.is_mesh_enabled:
-        raise HTTPException(409, "Пункт приёма исключён из Mesh-доставки. Выберите подключённый ПВЗ или склад.")
-    if body.qty > _free_units(db, origin) or _occupied_volume(db, origin.id) + volume * body.qty > _storage_capacity(origin):
-        raise HTTPException(409, "В пункте приёма продавца недостаточно свободной вместимости")
+    if origin is None:
+        origin = destination
 
     source_item = StockItem(
         product_id=product.id,
@@ -1032,6 +1085,21 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         )
     calculate_assortment(db, destination, sync_flags=True)
     db.commit()
+
+    if decision == "PVZ":
+        explanation = (
+            "Поставка принята. Выбран ПВЗ с подтверждённым спросом; проверены категория, "
+            "габариты и свободная вместимость."
+        )
+    else:
+        explanation = (
+            "Поставка принята на подключённый хаб: ни один ПВЗ не подошёл по спросу, "
+            "габаритам или свободной вместимости."
+        )
+    if transfer and transfer.status == "WAITING_ROUTE":
+        explanation += " Важно: товар принят, но перемещение ожидает подходящего грузового рейса. "
+        explanation += "Причина: нет активного маршрута, проходящего от пункта приёма к месту хранения."
+
     return {
         "product_id": product.id,
         "qty": body.qty,
@@ -1041,11 +1109,7 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         "storage_type": decision,
         "transfer_id": transfer.id if transfer else None,
         "transfer_status": transfer.status if transfer else "STORED_AT_DESTINATION",
-        "explanation": (
-            "Выбрано по фактическому спросу на товар, категории, габаритам и свободному объёму хранения."
-            if decision == "PVZ"
-            else "На ПВЗ нет подходящего спроса, габариты не подходят категории или недостаточно места. Товар направлен на подключённый склад."
-        ),
+        "explanation": explanation,
     }
 
 @router.get("/customer/profile/{customer_id}")
