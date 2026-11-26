@@ -127,52 +127,71 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
     if not product or not buyer_pvz:
         raise HTTPException(404, "Товар или ПВЗ заказа не найден")
 
-    item = None
-    if order.reserved_stock_item_id:
-        item = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
-    if not item:
-        item = db.query(StockItem).filter(
-            StockItem.order_id == order.id,
-            StockItem.product_id == order.product_id,
+    items = db.query(StockItem).filter(
+        StockItem.order_id == order.id,
+        StockItem.status == "ISSUED",
+    ).order_by(StockItem.id).all()
+    if not items and order.reserved_stock_item_id:
+        reserved = db.query(StockItem).filter(
+            StockItem.id == order.reserved_stock_item_id,
             StockItem.status == "ISSUED",
-        ).order_by(StockItem.id.desc()).first()
-    if not item:
+        ).first()
+        if reserved:
+            items = [reserved]
+    if not items:
         route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first() if order.chosen_route_id else None
         source_id = route.source_pvz_id if route and route.source_pvz_id else buyer_pvz.id
-        item = db.query(StockItem).filter(
+        fallback = db.query(StockItem).filter(
             StockItem.product_id == order.product_id,
             StockItem.pvz_id == source_id,
             StockItem.status == "ISSUED",
             StockItem.qty >= order.qty,
         ).order_by(StockItem.id.desc()).first()
-    if not item or item.status != "ISSUED" or item.qty < order.qty:
+        if fallback:
+            items = [fallback]
+
+    if sum(row.qty for row in items) < order.qty:
         raise HTTPException(409, "Не найдена точная партия выданного товара для возврата")
 
-    if item.qty > order.qty:
-        item.qty -= order.qty
-        returned_item = StockItem(
-            product_id=item.product_id,
-            pvz_id=item.pvz_id,
-            qty=order.qty,
-            status="ISSUED",
-            accepted_at=item.accepted_at,
-            ttl_days=item.ttl_days,
-            storage_deadline=item.storage_deadline,
-            top_flag=False,
-            last_top_check=utcnow(),
-            order_id=order.id,
-        )
-        db.add(returned_item)
-        db.flush()
-        item = returned_item
-    else:
-        item.order_id = order.id
-    order.reserved_stock_item_id = item.id
+    # Restrict the return to this order's exact quantity, splitting a legacy lot if needed.
+    remaining_to_return = order.qty
+    returned_items = []
+    for stock in items:
+        take = min(stock.qty, remaining_to_return)
+        if take == stock.qty:
+            returned = stock
+        else:
+            stock.qty -= take
+            returned = StockItem(
+                product_id=stock.product_id,
+                pvz_id=stock.pvz_id,
+                qty=take,
+                status="ISSUED",
+                accepted_at=stock.accepted_at,
+                ttl_days=stock.ttl_days,
+                storage_deadline=stock.storage_deadline,
+                top_flag=False,
+                last_top_check=utcnow(),
+                order_id=order.id,
+            )
+            db.add(returned)
+            db.flush()
+        returned.order_id = order.id
+        returned_items.append(returned)
+        remaining_to_return -= take
+        if remaining_to_return == 0:
+            break
+
+    if remaining_to_return:
+        raise HTTPException(409, "Количество партий не совпадает с количеством в заказе")
+    order.reserved_stock_item_id = returned_items[0].id
+    item = returned_items[0]
 
     refund_amount = round(product.price * order.qty, 2)
     if body.condition == "damaged":
-        item.pvz_id = buyer_pvz.id
-        _stock_transition(db, item, "DAMAGED", order.id)
+        for returned in returned_items:
+            returned.pvz_id = buyer_pvz.id
+            _stock_transition(db, returned, "DAMAGED", order.id)
         decision = "to_seller"
         return_status = "WAITING_SELLER"
         _create_incident(
@@ -188,15 +207,17 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
         # Evaluate space before moving the returned lot into the buyer's PVZ;
         # ISSUED stock is not counted as occupied storage.
         keep_at_buyer = _has_capacity(db, buyer_pvz, product, order.qty)
-        item.pvz_id = buyer_pvz.id
-        _stock_transition(db, item, "RETURNED", order.id)
+        for returned in returned_items:
+            returned.pvz_id = buyer_pvz.id
+            _stock_transition(db, returned, "RETURNED", order.id)
         if keep_at_buyer:
-            _stock_transition(db, item, "STORED", order.id)
-            item.accepted_at = utcnow()
-            item.ttl_days = 7
-            item.storage_deadline = utcnow() + timedelta(days=7)
-            item.top_flag = False
-            item.last_top_check = utcnow()
+            for returned in returned_items:
+                _stock_transition(db, returned, "STORED", order.id)
+                returned.accepted_at = utcnow()
+                returned.ttl_days = 7
+                returned.storage_deadline = utcnow() + timedelta(days=7)
+                returned.top_flag = False
+                returned.last_top_check = utcnow()
             decision = "keep"
             return_status = "PROCESSED"
         else:
