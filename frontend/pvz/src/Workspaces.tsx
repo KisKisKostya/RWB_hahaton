@@ -543,7 +543,7 @@ export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
       });
       const response = await api.sellerIntake({ product_id: Number(productId), qty: Number(qty), origin_pvz_id: Number(originId) });
       setResult(response);
-      setMessage('Система выбрала место хранения автоматически.');
+      setMessage('Поставка зарегистрирована. Решение Mesh показано ниже.');
       onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
     finally { setBusy(false); }
@@ -583,12 +583,14 @@ export function SellerWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
         <div className="seller-benefit"><span>03</span><strong>Доставка попутным рейсом</strong><p>Если назначен другой ПВЗ, товар поедет в фуре по существующему маршруту.</p></div>
       </div>
     </div>
-    {result && <Panel title="Решение Mesh" subtitle="Система сохранила приёмку и выбрала точку назначения">
+    {result && <Panel title="Поставка зарегистрирована" subtitle="Приёмка сохранена — ниже фактическое место и рекомендация Mesh">
       <div className="seller-decision">
-        <div className="decision-check">✓</div><div><span>РЕКОМЕНДУЕМОЕ МЕСТО ХРАНЕНИЯ</span><strong>{result.destination}</strong><small>{result.storage_type === 'HUB' ? 'Центральный склад · хаб' : 'Пункт выдачи с подтверждённым спросом'}</small></div>
-        <div className="decision-status">{result.transfer_status === 'READY_ON_ROUTE' ? 'Назначен рейс' : result.transfer_status === 'STORED_AT_DESTINATION' ? 'Остался на точке' : 'Ожидает рейс'}</div>
+        <div className="decision-check">✓</div><div><span>РЕКОМЕНДУЕМОЕ МЕСТО ХРАНЕНИЯ</span><strong>{result.destination}</strong><small>{result.storage_type === 'HUB' ? 'Центральный склад · хаб' : 'ПВЗ с подтверждённым спросом'}</small></div>
+        <div className="decision-status">{result.transfer_status === 'READY_ON_ROUTE' ? 'Назначен рейс' : result.transfer_status === 'STORED_AT_DESTINATION' ? 'Принято на точке' : result.transfer_status === 'SELLER_DELIVERY_REQUIRED' ? 'Нужна доставка продавцом' : 'Ожидает рейс'}</div>
       </div>
+      {result.accepted_at && <p className="workspace-result-note"><strong>Фактическая точка приёмки:</strong> {result.accepted_at}</p>}
       <p className="workspace-result-note">{result.explanation}</p>
+      {result.seller_action_required && <div className="seller-auto-note"><span>→</span><p><strong>Что делать дальше</strong> Вы можете самостоятельно отвезти товар в рекомендованную точку Mesh. Для этого выберите её в поле «Пункт, куда продавец привёз товар» и повторите оформление поставки.</p></div>}
     </Panel>}
   </div>;
 }
