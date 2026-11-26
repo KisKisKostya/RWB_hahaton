@@ -848,28 +848,45 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
     product = db.query(Product).filter(Product.id == body.product_id).first()
     if not product:
         raise HTTPException(404, "Товар не найден")
+
+    volume = _volume_m3(product)
     candidates = []
-    for location in db.query(PVZ).filter(PVZ.is_mesh_enabled.is_(True), PVZ.is_hub.is_(False)).all():
+    for location in db.query(PVZ).filter(
+        PVZ.is_mesh_enabled.is_(True),
+        PVZ.is_hub.is_(False),
+    ).all():
         demand, _ = _demand_totals(db, location.id)
         weekly = demand.get(product.id, 0)
-        if weekly <= 0:
+        if weekly <= 0 or volume > category_volume_limit(product):
             continue
         free = _storage_capacity(location) - _occupied_volume(db, location.id)
-        if _volume_m3(product) * body.qty <= free and _volume_m3(product) <= category_volume_limit(product):
+        if volume * body.qty <= free:
             candidates.append((weekly, free, location))
-    hub = db.query(PVZ).filter(PVZ.is_hub.is_(True)).first()
+
     if candidates:
         _, _, destination = max(candidates, key=lambda row: (row[0], row[1]))
         decision = "PVZ"
-    elif hub:
-        destination = hub
-        decision = "HUB"
     else:
-        raise HTTPException(409, "Нет подходящего ПВЗ и не настроен склад-хаб")
+        hubs = db.query(PVZ).filter(
+            PVZ.is_hub.is_(True),
+            PVZ.is_mesh_enabled.is_(True),
+        ).all()
+        suitable_hubs = [
+            ( _storage_capacity(hub) - _occupied_volume(db, hub.id), hub)
+            for hub in hubs
+            if volume * body.qty <= _storage_capacity(hub) - _occupied_volume(db, hub.id)
+        ]
+        if not suitable_hubs:
+            raise HTTPException(409, "Нет подключённого к Mesh склада с достаточным свободным объёмом")
+        _, destination = max(suitable_hubs, key=lambda row: row[0])
+        decision = "HUB"
 
     origin = db.query(PVZ).filter(PVZ.id == body.origin_pvz_id).first() if body.origin_pvz_id else destination
     if not origin:
         raise HTTPException(404, "Пункт приёма продавца не найден")
+    if not origin.is_mesh_enabled:
+        raise HTTPException(409, "Пункт приёма исключён из Mesh-доставки. Выберите подключённый ПВЗ или склад.")
+
     source_item = StockItem(
         product_id=product.id,
         pvz_id=origin.id,
@@ -899,12 +916,11 @@ def seller_auto_intake(body: SellerIntake, db: Session = Depends(get_db)):
         "transfer_id": transfer.id if transfer else None,
         "transfer_status": transfer.status if transfer else "STORED_AT_DESTINATION",
         "explanation": (
-            "Выбрано по фактическому спросу на товар и свободному объёму хранения."
+            "Выбрано по фактическому спросу на товар, категории, габаритам и свободному объёму хранения."
             if decision == "PVZ"
-            else "На ПВЗ нет подходящего спроса или свободного объёма. Товар направлен на хаб."
+            else "На ПВЗ нет подходящего спроса, габариты не подходят категории или недостаточно места. Товар направлен на подключённый склад."
         ),
     }
-
 
 @router.get("/customer/profile/{customer_id}")
 def get_customer_profile(customer_id: int, db: Session = Depends(get_db)):
