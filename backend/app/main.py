@@ -658,46 +658,65 @@ def return_order(order_id: int, body: schemas.ReturnIn, db: Session = Depends(ge
     return ret
 
 
-@app.post("/stock/{stock_id}/relocate", response_model=schemas.StockItemOut)
+@app.post("/stock/{stock_id}/relocate")
 def relocate(stock_id: int, body: schemas.RelocateIn, db: Session = Depends(get_db)):
     item = db.query(StockItem).filter(StockItem.id == stock_id).first()
     if not item:
         raise HTTPException(404, "stock not found")
+    if item.status != "STORED" or item.qty <= 0:
+        raise HTTPException(409, "Перемещать можно только товар со статусом «На хранении»")
+
+    source = db.query(PVZ).filter(PVZ.id == item.pvz_id).first()
     target = db.query(PVZ).filter(PVZ.id == body.target_pvz_id).first()
-    if not target:
-        raise HTTPException(404, "target pvz not found")
+    if not target or not source:
+        raise HTTPException(404, "source or target pvz not found")
+    if source.id == target.id:
+        raise HTTPException(400, "Исходный и целевой пункты совпадают")
+
+    from app.network import (
+        _create_transfer,
+        _occupied_volume,
+        _storage_capacity,
+        _volume_m3,
+    )
+    if not source.is_mesh_enabled or not target.is_mesh_enabled:
+        raise HTTPException(409, "Оба пункта должны участвовать в Mesh-доставке")
 
     cap = capacity_snapshot(db, target, incoming=item.qty)
     if not cap["capacity_ok"]:
         raise HTTPException(409, detail={"error": "no_capacity", "capacity": cap})
 
-    # TTL / TOP recheck
-    now = utcnow()
-    try:
-        if item.storage_deadline and item.storage_deadline < now:
-            set_stock_status(db, item, "EXPIRED", amount=0.0)
-            set_stock_status(db, item, "TO_SELLER", amount=0.0)
-            db.commit()
-            db.refresh(item)
-            return item
+    product = db.query(Product).filter(Product.id == item.product_id).first()
+    if not product:
+        raise HTTPException(404, "product not found")
+    incoming_volume = _volume_m3(product) * item.qty
+    if _occupied_volume(db, target.id) + incoming_volume > _storage_capacity(target):
+        raise HTTPException(409, detail={"error": "no_volume_capacity"})
 
-        if item.last_top_check and (now - item.last_top_check).days >= TOP_RECHECK_DAYS:
-            item.top_flag = False
-            item.last_top_check = now
-
-        item.pvz_id = target.id
-        set_stock_status(db, item, "RELOCATED", amount=0.0)
-        if target.is_hub:
-            set_stock_status(db, item, "TO_HUB", amount=0.0)
-        else:
-            set_stock_status(db, item, "STORED", amount=0.0)
-    except KeyError as exc:
-        raise HTTPException(409, f"bad stock status: {item.status}") from exc
-
+    transfer = _create_transfer(
+        db,
+        product_id=item.product_id,
+        qty=item.qty,
+        from_id=source.id,
+        to_id=target.id,
+        reason=body.reason or "manual",
+    )
+    if not transfer:
+        raise HTTPException(409, "Не удалось создать перемещение")
     db.commit()
-    db.refresh(item)
-    return item
-
+    return {
+        "transfer_id": transfer.id,
+        "status": transfer.status,
+        "from_pvz_id": transfer.from_pvz_id,
+        "to_pvz_id": transfer.to_pvz_id,
+        "route_id": transfer.route_id,
+        "distance_km": transfer.distance_km,
+        "message": (
+            "Перемещение назначено на действующий грузовой рейс."
+            if transfer.status == "READY_ON_ROUTE"
+            else "Товар ожидает подходящего действующего грузового рейса."
+        ),
+    }
 
 @app.get("/pvz/{pvz_id}/accruals", response_model=list[schemas.AccrualOut])
 def get_accruals(pvz_id: int, db: Session = Depends(get_db)):
