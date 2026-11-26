@@ -1,4 +1,5 @@
 """Seed demo data: PVZ, hub, sellers, products, stock, orders."""
+import argparse
 import random
 import sys
 from datetime import timedelta
@@ -49,6 +50,16 @@ PRODUCT_NAMES = [
     "Клавиатура Compact",
     "Шарф Wool",
     "Носки Pack3",
+    "Бутылка Steel",
+    "Плед Nordic",
+    "Колонка Mini",
+    "Пауэрбанк 20K",
+    "Кастрюля Stone",
+    "Набор контейнеров",
+    "Сыворотка Vitamin C",
+    "Фен Compact",
+    "Эспандер Pro",
+    "Сумка Shopper",
 ]
 
 
@@ -74,22 +85,35 @@ def clear(db) -> None:
     db.commit()
 
 
-def seed() -> None:
+def seed(reset: bool = False) -> None:
     init_db()
     db = SessionLocal()
     try:
-        clear(db)
+        # Без --reset скрипт никогда не удаляет уже существующие данные.
+        existing_pvz = db.query(PVZ).count()
+        existing_sellers = db.query(Seller).count()
+        if existing_pvz or existing_sellers:
+            if not reset:
+                print(
+                    "База уже содержит данные. Ничего не изменено. "
+                    "Для полной перегенерации демо-данных запусти: python -m app.seed --reset"
+                )
+                return
+            clear(db)
 
-        # --- Sellers (3) ---
+        # --- Sellers (6) ---
         sellers = [
-            Seller(name="Seller Alpha", commission_rate=0.15),
-            Seller(name="Seller Beta", commission_rate=0.12),
-            Seller(name="Seller Gamma", commission_rate=0.18),
+            Seller(name="Nord Wear", commission_rate=0.15),
+            Seller(name="Gadget House", commission_rate=0.12),
+            Seller(name="Home&Co", commission_rate=0.14),
+            Seller(name="Beauty Lab", commission_rate=0.18),
+            Seller(name="Sport Point", commission_rate=0.13),
+            Seller(name="Urban Goods", commission_rate=0.16),
         ]
         db.add_all(sellers)
         db.flush()
 
-        # --- PVZ: 3 Казань, 2 Москва, 1 хаб Москва ---
+        # --- Сеть: 6 ПВЗ в Казани, 5 ПВЗ в Москве и 2 городских склада ---
         pvz_list = [
             PVZ(
                 city="Казань",
@@ -132,6 +156,54 @@ def seed() -> None:
                 latitude=55.7495, longitude=37.5914, storage_area_m2=28, storage_height_m=2.2,
             ),
             PVZ(
+                city="Казань",
+                address="ул. Чистопольская,  набережная",
+                capacity_units=75,
+                reserve_pct=0.20,
+                peak_factor=1.1,
+                latitude=55.8210, longitude=49.1280, storage_area_m2=25, storage_height_m=2.2,
+            ),
+            PVZ(
+                city="Казань",
+                address="ул. Декабристов, 100",
+                capacity_units=65,
+                reserve_pct=0.20,
+                peak_factor=1.0,
+                latitude=55.8200, longitude=49.0950, storage_area_m2=22, storage_height_m=2.1,
+            ),
+            PVZ(
+                city="Казань",
+                address="ул. Академика Глушко, 30",
+                capacity_units=55,
+                reserve_pct=0.22,
+                peak_factor=1.0,
+                latitude=55.7530, longitude=49.2100, storage_area_m2=19, storage_height_m=2.0,
+            ),
+            PVZ(
+                city="Москва",
+                address="Ленинградский просп., 32",
+                capacity_units=90,
+                reserve_pct=0.20,
+                peak_factor=1.2,
+                latitude=55.7900, longitude=37.5600, storage_area_m2=32, storage_height_m=2.3,
+            ),
+            PVZ(
+                city="Москва",
+                address="Варшавское ш., е 26",
+                capacity_units=85,
+                reserve_pct=0.20,
+                peak_factor=1.1,
+                latitude=55.6900, longitude=37.6200, storage_area_m2=30, storage_height_m=2.2,
+            ),
+            PVZ(
+                city="Москва",
+                address="ул. Профсоюзная, 45",
+                capacity_units=75,
+                reserve_pct=0.20,
+                peak_factor=1.0,
+                latitude=55.6700, longitude=37.5600, storage_area_m2=27, storage_height_m=2.1,
+            ),
+            PVZ(
                 city="Москва",
                 address="Складской пр., 1 (HUB)",
                 capacity_units=2000,
@@ -141,18 +213,30 @@ def seed() -> None:
                 latitude=55.705, longitude=37.62, is_mesh_enabled=True,
                 storage_area_m2=1200, storage_height_m=8.0,
             ),
+            PVZ(
+                city="Казань",
+                address="Промышленная ул., 5 (HUB)",
+                capacity_units=1500,
+                reserve_pct=0.10,
+                peak_factor=1.0,
+                is_hub=True,
+                latitude=55.7350, longitude=49.1900, is_mesh_enabled=True,
+                storage_area_m2=900, storage_height_m=7.0,
+            ),
         ]
         db.add_all(pvz_list)
         db.flush()
 
-        kazan = [p for p in pvz_list if p.city == "Казань"]
+        kazan = [p for p in pvz_list if p.city == "Казань" and not p.is_hub]
         moscow = [p for p in pvz_list if p.city == "Москва" and not p.is_hub]
-        hub = next(p for p in pvz_list if p.is_hub)
+        moscow_hub = next(p for p in pvz_list if p.city == "Москва" and p.is_hub)
+        kazan_hub = next(p for p in pvz_list if p.city == "Казань" and p.is_hub)
+        hub = moscow_hub
 
-        # --- Products (20) ---
+        # --- Products (30) ---
         products = []
         for i, name in enumerate(PRODUCT_NAMES):
-            seller = sellers[i % 3]
+            seller = sellers[i % len(sellers)]
             products.append(
                 Product(
                     seller_id=seller.id,
@@ -289,60 +373,83 @@ def seed() -> None:
                 calculate_assortment(db, location, sync_flags=True)
         db.flush()
 
-        # --- Road graph and active line-haul truck routes ---
-        roads = [
-            RoadEdge(from_pvz_id=1, to_pvz_id=2, distance_km=4.5),
-            RoadEdge(from_pvz_id=2, to_pvz_id=3, distance_km=6.2),
-            RoadEdge(from_pvz_id=1, to_pvz_id=3, distance_km=3.8),
-            RoadEdge(from_pvz_id=4, to_pvz_id=5, distance_km=4.2),
-            RoadEdge(from_pvz_id=4, to_pvz_id=6, distance_km=18.0),
-            RoadEdge(from_pvz_id=5, to_pvz_id=6, distance_km=20.0),
-            RoadEdge(from_pvz_id=3, to_pvz_id=6, distance_km=790.0),
-        ]
+        # --- Городские дорожные графы и рейсы до локальных складов ---
+        roads = []
+        for locations, local_hub in ((kazan, kazan_hub), (moscow, moscow_hub)):
+            # Цепочка городских ПВЗ + отдельное плечо до склада своего города.
+            for left, right in zip(locations, locations[1:]):
+                roads.append(
+                    RoadEdge(
+                        from_pvz_id=left.id,
+                        to_pvz_id=right.id,
+                        distance_km=round(random.uniform(2.5, 9.5), 1),
+                    )
+                )
+            roads.append(
+                RoadEdge(
+                    from_pvz_id=locations[-1].id,
+                    to_pvz_id=local_hub.id,
+                    distance_km=round(random.uniform(8.0, 18.0), 1),
+                )
+            )
         db.add_all(roads)
         db.flush()
-        kazan_route = TruckRoute(name="Казань · городской контур", is_active=True)
-        moscow_route = TruckRoute(name="Москва · ПВЗ — склад", is_active=True)
-        kazan_outbound = TruckRoute(name="Казань → хаб", is_active=True)
-        kazan_inbound = TruckRoute(name="Хаб → Казань", is_active=True)
-        moscow_inbound = TruckRoute(name="Хаб → Москва", is_active=True)
-        moscow_outbound = TruckRoute(name="Москва → хаб", is_active=True)
-        db.add_all([kazan_route, moscow_route, kazan_outbound, kazan_inbound, moscow_inbound, moscow_outbound])
-        db.flush()
-        for route, stops in (
-            (kazan_route, [1, 2, 3]),
-            (moscow_route, [4, 5, 6]),
-            (kazan_outbound, [1, 2, 3, 6]),
-            (kazan_inbound, [6, 3, 1, 2]),
-            (moscow_inbound, [6, 5, 4]),
-            (moscow_outbound, [4, 5, 6]),
-        ):
-            for order_no, location_id in enumerate(stops):
-                db.add(TruckRouteStop(route_id=route.id, pvz_id=location_id, sequence_no=order_no))
 
-        default_customer = Customer(
-            name="Александр Покупатель",
-            phone="+7 900 000-00-00",
-            email="customer@example.com",
-            city="Казань",
-            preferred_pvz_id=kazan[0].id,
-        )
-        db.add(default_customer)
+        route_specs = [
+            ("Казань · городской контур", kazan),
+            ("Казань · ПВЗ → склад", [*kazan, kazan_hub]),
+            ("Казань · склад → ПВЗ", [kazan_hub, *reversed(kazan)]),
+            ("Москва · городской контур", moscow),
+            ("Москва · ПВЗ → склад", [*moscow, moscow_hub]),
+            ("Москва · склад → ПВЗ", [moscow_hub, *reversed(moscow)]),
+        ]
+        routes = []
+        for route_name, stops in route_specs:
+            route = TruckRoute(name=route_name, is_active=True)
+            db.add(route)
+            db.flush()
+            routes.append(route)
+            for sequence_no, location in enumerate(stops):
+                db.add(
+                    TruckRouteStop(
+                        route_id=route.id,
+                        pvz_id=location.id,
+                        sequence_no=sequence_no,
+                    )
+                )
+
+        customers = []
+        customer_names = [
+            "Александр Покупатель", "Мария Смирнова", "Иван Петров",
+            "Екатерина Волкова", "Дмитрий Соколов", "Анна Кузнецова",
+            "Максим Орлов", "Полина Морозова", "Артём Васильев", "Ольга Новикова",
+        ]
+        for index, name in enumerate(customer_names):
+            city = "Казань" if index % 2 == 0 else "Москва"
+            locations = kazan if city == "Казань" else moscow
+            customer = Customer(
+                name=name,
+                phone=f"+7 900 100-{index:02d}-{index + 10:02d}",
+                email=f"buyer{index + 1}@example.com",
+                city=city,
+                preferred_pvz_id=locations[index % len(locations)].id,
+            )
+            db.add(customer)
+            customers.append(customer)
         db.flush()
 
-        # --- Orders (30) ---
-        buyer_cities = ["Казань"] * 18 + ["Москва"] * 12
+        # --- Заказы (60) с разными покупателями и пунктами выдачи ---
+        buyer_cities = ["Казань"] * 36 + ["Москва"] * 24
         random.shuffle(buyer_cities)
         orders = []
-        for i in range(30):
+        for i in range(60):
             city = buyer_cities[i]
             if city == "Казань":
                 buyer_pvz = random.choice(kazan)
-                # prefer products with local stock for first half
-                prod = products[i % 8] if i < 15 else products[12 + (i % 4)]
+                prod = products[i % 8] if i < 20 else products[12 + (i % 8)]
             else:
                 buyer_pvz = random.choice(moscow)
-                prod = products[8 + (i % 4)] if i % 3 else products[12 + (i % 4)]
+                prod = products[8 + (i % 4)] if i % 3 else products[12 + (i % 8)]
 
             order = Order(
                 product_id=prod.id,
@@ -350,7 +457,8 @@ def seed() -> None:
                 buyer_city=city,
                 buyer_pvz_id=buyer_pvz.id,
                 status="CREATED",
-                created_at=now - timedelta(hours=random.randint(1, 72)),
+                customer_id=random.choice([c for c in customers if c.city == city]).id,
+                created_at=now - timedelta(hours=random.randint(1, 120)),
             )
             db.add(order)
             db.flush()
@@ -360,7 +468,7 @@ def seed() -> None:
         db.commit()
         print(
             f"Seeded: sellers={len(sellers)}, pvz={len(pvz_list)} "
-            f"(hub=1), products={len(products)}, stock={len(stock_rows)}, "
+            f"(hubs=2), products={len(products)}, stock={len(stock_rows)}, "
             f"orders={len(orders)}"
         )
     finally:
@@ -368,4 +476,10 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(description="Заполнение базы демонстрационными данными Mesh")
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="очистить существующие данные перед созданием нового демо-набора",
+    )
+    seed(reset=parser.parse_args().reset)
