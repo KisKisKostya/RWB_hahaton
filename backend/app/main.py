@@ -49,7 +49,7 @@ CITY_COORDS = {
     "Москва": (55.755, 37.617),
 }
 
-OCCUPIED_STATUSES = {"ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER"}
+OCCUPIED_STATUSES = {"ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER", "RETURNED", "DAMAGED"}
 
 app = FastAPI(title="Mesh MVP", version="0.1.0")
 app.add_middleware(
@@ -202,6 +202,55 @@ def find_local_stock(db: Session, product_id: int, buyer_city: str) -> Optional[
 
 def find_hub(db: Session) -> Optional[PVZ]:
     return db.query(PVZ).filter(PVZ.is_hub.is_(True)).first()
+
+
+def reserve_stock_for_order(db: Session, order: Order, source_pvz_id: int, require_top: bool = False) -> StockItem:
+    query = db.query(StockItem).filter(
+        StockItem.product_id == order.product_id,
+        StockItem.pvz_id == source_pvz_id,
+        StockItem.status.in_(("ACCEPTED", "STORED")),
+        StockItem.qty > 0,
+    )
+    if require_top:
+        query = query.filter(StockItem.top_flag.is_(True))
+    rows = query.order_by(StockItem.accepted_at.asc()).all()
+    if sum(row.qty for row in rows) < order.qty:
+        raise HTTPException(409, "Недостаточно доступного остатка для резервирования заказа")
+
+    remaining = order.qty
+    reserved_items = []
+    for row in rows:
+        take = min(row.qty, remaining)
+        if take == row.qty:
+            reserved = row
+        else:
+            row.qty -= take
+            reserved = StockItem(
+                product_id=row.product_id,
+                pvz_id=row.pvz_id,
+                qty=take,
+                status="STORED",
+                accepted_at=row.accepted_at,
+                ttl_days=row.ttl_days,
+                storage_deadline=row.storage_deadline,
+                top_flag=row.top_flag,
+                last_top_check=row.last_top_check,
+                order_id=order.id,
+            )
+            db.add(reserved)
+            db.flush()
+        if reserved.status == "ACCEPTED":
+            set_stock_status(db, reserved, "STORED", order_id=order.id)
+        set_stock_status(db, reserved, "RESERVED", order_id=order.id)
+        reserved.order_id = order.id
+        reserved_items.append(reserved)
+        remaining -= take
+        if remaining <= 0:
+            break
+
+    order.reserved_stock_item_id = reserved_items[0].id
+    db.flush()
+    return reserved_items[0]
 
 
 def build_route_options(db: Session, order: Order) -> list[RouteOption]:
@@ -472,44 +521,27 @@ def select_route(order_id: int, body: schemas.RouteSelectIn, db: Session = Depen
     order.chosen_route_id = route.id
     set_order_status(order, "ROUTE_SELECTED")
 
-    # reserve stock / capacity
-    if route.type == "local" and route.source_pvz_id:
-        item = find_local_stock(db, order.product_id, order.buyer_city)
-        if item:
-            set_stock_status(db, item, "RESERVED", order_id=order.id)
-        buyer = db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
-        db.add(
-            CapacityReservation(
-                pvz_id=buyer.id,
-                units=order.qty,
-                source=f"order:{order.id}",
-                expires_at=utcnow() + timedelta(days=2),
-            )
-        )
-        set_order_status(order, "RESERVED")
+    # Reserve exact stock lots for this order, splitting a lot when needed.
+    if route.type == "local":
+        if not route.source_pvz_id:
+            raise HTTPException(409, "Для локального маршрута не задан склад-источник")
+        reserve_stock_for_order(db, order, route.source_pvz_id, require_top=True)
     elif route.type == "hub":
         hub = find_hub(db)
-        if hub:
-            item = (
-                db.query(StockItem)
-                .filter(
-                    StockItem.product_id == order.product_id,
-                    StockItem.pvz_id == hub.id,
-                    StockItem.status == "STORED",
-                )
-                .first()
-            )
-            if item:
-                set_stock_status(db, item, "RESERVED", order_id=order.id)
-            db.add(
-                CapacityReservation(
-                    pvz_id=order.buyer_pvz_id,
-                    units=order.qty,
-                    source=f"order:{order.id}:hub",
-                    expires_at=utcnow() + timedelta(days=3),
-                )
-            )
-            set_order_status(order, "RESERVED")
+        if not hub:
+            raise HTTPException(409, "Хаб недоступен")
+        reserve_stock_for_order(db, order, hub.id)
+
+    buyer = db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
+    db.add(
+        CapacityReservation(
+            pvz_id=buyer.id,
+            units=order.qty,
+            source=f"order:{order.id}",
+            expires_at=utcnow() + timedelta(days=2 if route.type == "local" else 3),
+        )
+    )
+    set_order_status(order, "RESERVED")
 
     db.commit()
     db.refresh(order)
@@ -528,21 +560,17 @@ def assemble(order_id: int, db: Session = Depends(get_db)):
     except KeyError as exc:
         raise HTTPException(409, f"bad status: {order.status}") from exc
 
-    route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
-    if route and route.source_pvz_id:
-        item = (
-            db.query(StockItem)
-            .filter(
-                StockItem.product_id == order.product_id,
-                StockItem.pvz_id == route.source_pvz_id,
-                StockItem.status == "RESERVED",
-            )
-            .first()
-        )
-        if item:
-            set_stock_status(
-                db, item, "ASSEMBLED", order_id=order.id, amount=ASSEMBLY_FEE
-            )
+    item = None
+    if order.reserved_stock_item_id:
+        item = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
+    if not item:
+        item = db.query(StockItem).filter(
+            StockItem.order_id == order.id,
+            StockItem.status == "RESERVED",
+        ).order_by(StockItem.id).first()
+    if not item:
+        raise HTTPException(409, "Не найдена зарезервированная партия товара")
+    set_stock_status(db, item, "ASSEMBLED", order_id=order.id, amount=ASSEMBLY_FEE)
 
     db.commit()
     db.refresh(order)
@@ -563,22 +591,21 @@ def issue(order_id: int, db: Session = Depends(get_db)):
     except KeyError as exc:
         raise HTTPException(409, f"bad status: {order.status}") from exc
 
-    route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
-    if route and route.source_pvz_id:
-        item = (
-            db.query(StockItem)
-            .filter(
-                StockItem.product_id == order.product_id,
-                StockItem.pvz_id == route.source_pvz_id,
-                StockItem.status.in_(["ASSEMBLED", "RESERVED"]),
-            )
-            .first()
-        )
-        if item:
-            if item.status == "RESERVED":
-                set_stock_status(db, item, "ASSEMBLED", order_id=order.id)
-            set_stock_status(db, item, "ISSUED", order_id=order.id)
+    item = None
+    if order.reserved_stock_item_id:
+        item = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
+    if not item:
+        item = db.query(StockItem).filter(
+            StockItem.order_id == order.id,
+            StockItem.status.in_(("ASSEMBLED", "RESERVED")),
+        ).order_by(StockItem.id).first()
+    if not item:
+        raise HTTPException(409, "Не найдена зарезервированная партия товара")
+    if item.status == "RESERVED":
+        set_stock_status(db, item, "ASSEMBLED", order_id=order.id)
+    set_stock_status(db, item, "ISSUED", order_id=order.id)
 
+    route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
     write_accrual(
         db,
         pvz_id=order.buyer_pvz_id,
@@ -605,59 +632,12 @@ def return_order(order_id: int, body: schemas.ReturnIn, db: Session = Depends(ge
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise HTTPException(404, "order not found")
+    from app.operations import ReturnRequest, process_return
 
-    if body.condition == "damaged":
-        decision = "to_seller"
-        stock_status = "DAMAGED"
-    else:
-        cap = capacity_snapshot(
-            db, db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first(), incoming=order.qty
-        )
-        if cap["capacity_ok"]:
-            decision = "keep"
-            stock_status = "STORED"
-        else:
-            decision = "relocate"
-            stock_status = "RELOCATED"
-
-    ret = Return(
-        order_id=order.id,
-        reason=body.reason,
-        condition=body.condition,
-        decision=decision,
-    )
-    db.add(ret)
-
-    route = db.query(RouteOption).filter(RouteOption.id == order.chosen_route_id).first()
-    source_id = route.source_pvz_id if route else order.buyer_pvz_id
-    item = (
-        db.query(StockItem)
-        .filter(StockItem.product_id == order.product_id, StockItem.pvz_id == source_id)
-        .order_by(StockItem.id.desc())
-        .first()
-    )
-    if item:
-        if decision == "keep":
-            item.pvz_id = order.buyer_pvz_id
-            item.top_flag = True
-            item.last_top_check = utcnow()
-        elif decision == "relocate":
-            hub = find_hub(db)
-            if hub:
-                item.pvz_id = hub.id
-        try:
-            set_stock_status(db, item, stock_status, order_id=order.id)
-        except KeyError as exc:
-            raise HTTPException(409, f"bad stock status: {item.status}") from exc
-
-    try:
-        set_order_status(order, "RETURNED")
-    except KeyError as exc:
-        raise HTTPException(409, f"bad status: {order.status}") from exc
-
+    result = process_return(db, order, ReturnRequest(reason=body.reason, condition=body.condition))
     db.commit()
-    db.refresh(ret)
-    return ret
+    db.refresh(result)
+    return result
 
 
 @app.post("/stock/{stock_id}/relocate")
@@ -733,35 +713,30 @@ def seller_payouts(seller_id: int, db: Session = Depends(get_db)):
     if not seller:
         raise HTTPException(404, "seller not found")
     products = db.query(Product).filter(Product.seller_id == seller_id).all()
-    pids = [p.id for p in products]
-    orders = db.query(Order).filter(Order.product_id.in_(pids)).all() if pids else []
+    product_map = {product.id: product for product in products}
+    orders = db.query(Order).filter(Order.product_id.in_(product_map.keys())).all() if product_map else []
     out = []
-    for o in orders:
-        product = next(p for p in products if p.id == o.product_id)
-        route = (
-            db.query(RouteOption).filter(RouteOption.id == o.chosen_route_id).first()
-            if o.chosen_route_id
-            else None
-        )
-        price = product.price * o.qty
-        commission = COMMISSION_RATE * price
-        stor = 0.0
-        payout = route.seller_payout if route else price - commission
-        if route:
-            # reverse-engineer storage from payout formula
-            stor = price - commission - route.seller_payout
-        out.append(
-            schemas.SellerPayoutOut(
-                seller_id=seller_id,
-                order_id=o.id,
-                product_id=product.id,
-                price=round(price, 2),
-                commission=round(commission, 2),
-                storage_fee=round(stor, 2),
-                payout=round(payout, 2),
-                status=o.status,
-            )
-        )
+    for order in orders:
+        product = product_map[order.product_id]
+        gross = product.price * order.qty
+        returned = sum(row.refund_amount for row in db.query(Return).filter(Return.order_id == order.id).all())
+        commission = max(gross - returned, 0) * seller.commission_rate
+        stock = db.query(StockItem).filter(StockItem.order_id == order.id).first()
+        if not stock and order.reserved_stock_item_id:
+            stock = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
+        source = db.query(PVZ).filter(PVZ.id == stock.pvz_id).first() if stock else None
+        storage = storage_fee(stock.accepted_at, order.qty, source.storage_rate_day if source else STORAGE_PER_UNIT_DAY) if stock else 0.0
+        payout = max(gross - returned, 0) - commission - storage
+        out.append(schemas.SellerPayoutOut(
+            seller_id=seller_id,
+            order_id=order.id,
+            product_id=product.id,
+            price=round(gross, 2),
+            commission=round(commission, 2),
+            storage_fee=round(storage, 2),
+            payout=round(payout, 2),
+            status=order.status,
+        ))
     return out
 
 
@@ -838,3 +813,5 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
 
 # New operator, seller and customer workflows.
 app.include_router(network_router)
+from app.operations import router as operations_router
+app.include_router(operations_router)
