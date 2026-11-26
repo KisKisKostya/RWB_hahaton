@@ -154,6 +154,7 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
   const [failureMessage, setFailureMessage] = useState('Грузовой рейс отменён перевозчиком');
   const [busyId, setBusyId] = useState<number | null>(null);
   const [message, setMessage] = useState('');
+  const [maintenanceResult, setMaintenanceResult] = useState<any>(null);
 
   const load = async () => {
     try {
@@ -174,6 +175,22 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
     }
   };
   useEffect(() => { load(); }, []);
+
+  const runMaintenance = async () => {
+    setBusyId(-1);
+    try {
+      const result = await api.runStockMaintenance();
+      setMaintenanceResult(result);
+      setMessage(
+        'Проверка завершена: истекло партий — ' + result.expired_items +
+        '; ПВЗ с обновлённым TOP — ' + result.top_rechecked_count + '.'
+      );
+      await load();
+      onRefresh?.();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Не удалось проверить сроки хранения');
+    } finally { setBusyId(null); }
+  };
 
   const reportFailure = async (event: FormEvent) => {
     event.preventDefault();
@@ -220,7 +237,7 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
     try {
       await api.resolveIncident(incident.id, {
         resolution_note: 'Проверено оператором; действие выполнено по регламенту',
-        mark_sent_to_seller: incident.incident_type === 'DAMAGED_RETURN',
+        mark_sent_to_seller: incident.incident_type === 'DAMAGED_RETURN' || incident.incident_type === 'STOCK_EXPIRED',
       });
       setMessage('Инцидент #' + incident.id + ' закрыт.');
       await load(); onRefresh?.();
@@ -235,6 +252,13 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
   return <div className="ops-stack">
     <Banner message={message} onClose={() => setMessage('')} />
     <div className="ops-intro"><div><span>ОПЕРАТОР · КОНТРОЛЬ ИСКЛЮЧЕНИЙ</span><h1>Сбои и инциденты</h1><p>Рейс можно вернуть в очередь и назначить повторно после восстановления маршрута. Отмена заказа освобождает зарезервированный товар и ёмкость.</p></div><div className="ops-kpi"><strong>{openCount}</strong><span>открытых инцидентов</span></div></div>
+    <OpsPanel title="Сроки хранения и TOP-перепроверка" note="Проверяет storage_deadline, переводит просроченные партии в EXPIRED и обновляет устаревшие TOP-флаги">
+      <div className="ops-actions">
+        <button className="workspace-button primary" disabled={busyId !== null} onClick={runMaintenance}>{busyId === -1 ? 'Проверяем…' : 'Проверить сроки и обновить TOP'}</button>
+      </div>
+      {maintenanceResult && <p className="ops-hint">Последняя проверка: истекло партий {maintenanceResult.expired_items}; TOP обновлён для ПВЗ: {maintenanceResult.top_rechecked_pvz_ids.join(', ') || 'нет'}. Период перепроверки — {maintenanceResult.top_recheck_interval_days} дней.</p>}
+      <p className="ops-hint">После истечения TTL партия исключается из продажи. Оператор подтверждает передачу продавцу через карточку созданного инцидента.</p>
+    </OpsPanel>
     <div className="ops-two-col">
       <OpsPanel title="Сбой грузового рейса" note="Только перемещения, уже назначенные на рейс">
         <form className="ops-form" onSubmit={reportFailure}>
@@ -264,7 +288,7 @@ export function IncidentsWorkspace({ onRefresh }: Props) {
             <button className="workspace-button primary" disabled={busyId !== null} onClick={() => resolve(incident)}>Закрыть инцидент</button>
           </div>}
         </article>)}
-        {!incidents.length && <div className="ops-empty">Инцидентов нет. Они появятся при сбое рейса, повреждении возврата или нехватке места.</div>}
+        {!incidents.length && <div className="ops-empty">Инцидентов нет. Они появятся при сбое рейса, истечении TTL, повреждении возврата или нехватке места.</div>}
       </div>
     </OpsPanel>
   </div>;
