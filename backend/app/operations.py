@@ -398,7 +398,7 @@ def retry_transfer(transfer_id: int, db: Session = Depends(get_db)):
     incidents = db.query(InventoryIncident).filter(
         InventoryIncident.transfer_id == transfer.id,
         InventoryIncident.status == "OPEN",
-        InventoryIncident.incident_type == "ROUTE_FAILURE",
+        InventoryIncident.incident_type.in_(("ROUTE_FAILURE", "ROUTE_UNAVAILABLE", "RETURN_WAITING_ROUTE")),
     ).all()
     for incident in incidents:
         incident.status = "RESOLVED"
@@ -508,11 +508,14 @@ def finance_summary(pvz_id: Optional[int] = Query(default=None), db: Session = D
         commission_rate = float(seller.commission_rate if seller else 0.15)
         order_commission = max(price - order_refunds, 0) * commission_rate
         commission += order_commission
-        stock = db.query(StockItem).filter(StockItem.order_id == order.id).first()
-        if not stock and order.reserved_stock_item_id:
-            stock = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
-        source_pvz = db.query(PVZ).filter(PVZ.id == stock.pvz_id).first() if stock else db.query(PVZ).filter(PVZ.id == order.buyer_pvz_id).first()
-        storage = _storage_fee(stock, source_pvz, order.qty)
+        stock_rows = db.query(StockItem).filter(StockItem.order_id == order.id).all()
+        if not stock_rows and order.reserved_stock_item_id:
+            fallback = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
+            stock_rows = [fallback] if fallback else []
+        storage = 0.0
+        for stock in stock_rows:
+            source_pvz = db.query(PVZ).filter(PVZ.id == stock.pvz_id).first()
+            storage += _storage_fee(stock, source_pvz, stock.qty)
         storage_total += storage
         payout = max(price - order_refunds, 0) - order_commission - storage
         seller_payout += payout
@@ -569,11 +572,14 @@ def finance_seller_payouts(db: Session = Depends(get_db)):
             refunds += refund
             fee = max(amount - refund, 0) * seller.commission_rate
             commission += fee
-            stock = db.query(StockItem).filter(StockItem.order_id == order.id).first()
-            if not stock and order.reserved_stock_item_id:
-                stock = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
-            pvz = db.query(PVZ).filter(PVZ.id == (stock.pvz_id if stock else order.buyer_pvz_id)).first()
-            store_fee = _storage_fee(stock, pvz, order.qty)
+            stock_rows = db.query(StockItem).filter(StockItem.order_id == order.id).all()
+            if not stock_rows and order.reserved_stock_item_id:
+                fallback = db.query(StockItem).filter(StockItem.id == order.reserved_stock_item_id).first()
+                stock_rows = [fallback] if fallback else []
+            store_fee = 0.0
+            for stock in stock_rows:
+                pvz = db.query(PVZ).filter(PVZ.id == stock.pvz_id).first()
+                store_fee += _storage_fee(stock, pvz, stock.qty)
             storage += store_fee
             payout += max(amount - refund, 0) - fee - store_fee
         result.append({
