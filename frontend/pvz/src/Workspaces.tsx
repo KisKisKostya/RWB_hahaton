@@ -353,6 +353,7 @@ export function SellerWorkspace({ pvzList }: WorkspaceProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [productId, setProductId] = useState('');
   const [qty, setQty] = useState('10');
+  const [dimensions, setDimensions] = useState({ length_cm: '10', width_cm: '10', height_cm: '10' });
   const [originId, setOriginId] = useState(String(pvzList[0]?.id || ''));
   const [result, setResult] = useState<any>(null);
   const [message, setMessage] = useState('');
@@ -361,6 +362,11 @@ export function SellerWorkspace({ pvzList }: WorkspaceProps) {
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setResult(null);
     try {
+      await api.updateProductDimensions(Number(productId), {
+        length_cm: Number(dimensions.length_cm),
+        width_cm: Number(dimensions.width_cm),
+        height_cm: Number(dimensions.height_cm),
+      });
       const response = await api.sellerIntake({ product_id: Number(productId), qty: Number(qty), origin_pvz_id: Number(originId) });
       setResult(response);
       setMessage('Система выбрала место хранения автоматически.');
@@ -373,8 +379,22 @@ export function SellerWorkspace({ pvzList }: WorkspaceProps) {
     <div className="seller-workspace-grid">
       <Panel title="Передать товар в сеть" subtitle="Не нужно самостоятельно выбирать склад назначения">
         <form className="workspace-form" onSubmit={submit}>
-          <label>Товар<select value={productId} onChange={(e) => setProductId(e.target.value)} required><option value="">Выберите товар</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select></label>
-          {productId && (() => { const p = products.find((row) => row.id === Number(productId)); return p ? <div className="product-size-preview"><strong>Габариты упаковки</strong><span>{p.length_cm} × {p.width_cm} × {p.height_cm} см · {((p.length_cm || 10) * (p.width_cm || 10) * (p.height_cm || 10) / 1000000).toFixed(4)} м³</span></div> : null; })()}
+          <label>Товар<select value={productId} onChange={(e) => {
+            const value = e.target.value;
+            const selected = products.find((item) => item.id === Number(value));
+            setProductId(value);
+            if (selected) setDimensions({
+              length_cm: String(selected.length_cm || 10),
+              width_cm: String(selected.width_cm || 10),
+              height_cm: String(selected.height_cm || 10),
+            });
+          }} required><option value="">Выберите товар</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sku}</option>)}</select></label>
+          {productId && <div className="workspace-form-grid dimension-fields">
+            <label>Длина, см<input type="number" min="0.1" step="0.1" value={dimensions.length_cm} onChange={(e) => setDimensions({ ...dimensions, length_cm: e.target.value })} required /></label>
+            <label>Ширина, см<input type="number" min="0.1" step="0.1" value={dimensions.width_cm} onChange={(e) => setDimensions({ ...dimensions, width_cm: e.target.value })} required /></label>
+            <label>Высота, см<input type="number" min="0.1" step="0.1" value={dimensions.height_cm} onChange={(e) => setDimensions({ ...dimensions, height_cm: e.target.value })} required /></label>
+            <div className="product-size-preview"><strong>Объём единицы</strong><span>{((Number(dimensions.length_cm) * Number(dimensions.width_cm) * Number(dimensions.height_cm)) / 1000000).toFixed(4)} м³</span></div>
+          </div>}
           <label>Количество, шт.<input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} required /></label>
           <label>Пункт, куда продавец привёз товар<select value={originId} onChange={(e) => setOriginId(e.target.value)} required>{pvzList.map((node) => <option value={node.id} key={node.id}>#{node.id} · {node.city}, {node.address}</option>)}</select></label>
           <div className="seller-auto-note"><span>✦</span><p><strong>Автоматическое распределение</strong> Приоритет получает пункт с наибольшими продажами этого товара, если хватает места. Крупногабаритные и невостребованные позиции направляются на хаб.</p></div>
