@@ -400,8 +400,16 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
   </div>;
 }
 
-export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
+export function RoutesWorkspace({ pvzList, onRefresh }: WorkspaceProps) {
   const [routes, setRoutes] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [sourceStock, setSourceStock] = useState<any[]>([]);
+  const [shipmentRouteId, setShipmentRouteId] = useState('');
+  const [shipmentSourceId, setShipmentSourceId] = useState('');
+  const [shipmentTargetId, setShipmentTargetId] = useState('');
+  const [shipmentProductId, setShipmentProductId] = useState('');
+  const [shipmentQty, setShipmentQty] = useState('1');
+  const [shipmentBusy, setShipmentBusy] = useState(false);
   const [name, setName] = useState('Новый рейс');
   const [fromId, setFromId] = useState(String(pvzList[0]?.id || ''));
   const [toId, setToId] = useState(String(pvzList[1]?.id || ''));
@@ -411,13 +419,82 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
   const [message, setMessage] = useState('');
   const locName = (id: number) => pvzList.find((node) => node.id === id)?.address || 'Пункт #' + id;
   const load = async () => { try { setRoutes(await api.listTruckRoutes()); } catch (error) { setMessage(jsonError(error)); } };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.getProducts().then(setProducts).catch((error) => setMessage(jsonError(error))); }, []);
+  const activeRoutes = routes.filter((route) => route.is_active);
+  const selectedShipmentRoute = activeRoutes.find((route) => String(route.id) === shipmentRouteId);
+  const shipmentStops: number[] = selectedShipmentRoute?.stop_pvz_ids || [];
+  const sourceStopIndex = shipmentStops.indexOf(Number(shipmentSourceId));
+  const laterStops = sourceStopIndex >= 0 ? shipmentStops.slice(sourceStopIndex + 1) : [];
+  const availableProducts = products.filter((product) => sourceStock.some((stock) =>
+    stock.product_id === product.id && stock.status === 'STORED' && Number(stock.qty) > 0
+  ));
+  const selectedStockQty = sourceStock.filter((stock) =>
+    stock.product_id === Number(shipmentProductId) && stock.status === 'STORED'
+  ).reduce((sum, stock) => sum + Number(stock.qty), 0);
+
   useEffect(() => {
-    if (pvzList.length > 0) {
-      setFromId((current) => current || String(pvzList[0].id));
-      setToId((current) => current || String(pvzList.find((node) => node.id !== Number(fromId))?.id || pvzList[0].id));
+    if (!activeRoutes.length) { setShipmentRouteId(''); return; }
+    if (!activeRoutes.some((route) => String(route.id) === shipmentRouteId)) {
+      const first = activeRoutes[0];
+      setShipmentRouteId(String(first.id));
+      setShipmentSourceId(String(first.stop_pvz_ids[0] || ''));
+      setShipmentTargetId(String(first.stop_pvz_ids[1] || ''));
     }
-  }, [pvzList, fromId]);
+  }, [routes]);
+  useEffect(() => {
+    if (!selectedShipmentRoute) return;
+    const stops: number[] = selectedShipmentRoute.stop_pvz_ids || [];
+    if (!stops.includes(Number(shipmentSourceId))) {
+      setShipmentSourceId(String(stops[0] || ''));
+      setShipmentTargetId(String(stops[1] || ''));
+    } else {
+      const index = stops.indexOf(Number(shipmentSourceId));
+      if (!stops.slice(index + 1).includes(Number(shipmentTargetId))) {
+        setShipmentTargetId(String(stops[index + 1] || ''));
+      }
+    }
+  }, [shipmentRouteId, routes]);
+  useEffect(() => {
+    if (!shipmentSourceId) { setSourceStock([]); return; }
+    api.getStock(Number(shipmentSourceId)).then((items) => {
+      setSourceStock(items);
+      const firstProduct = products.find((product) => items.some((stock: any) =>
+        stock.product_id === product.id && stock.status === 'STORED' && Number(stock.qty) > 0
+      ));
+      if (firstProduct) {
+        setShipmentProductId(String(firstProduct.id));
+        const firstStockQty = items.filter((stock: any) => stock.product_id === firstProduct.id && stock.status === 'STORED')
+          .reduce((sum: number, stock: any) => sum + Number(stock.qty), 0);
+        setShipmentQty(String(Math.max(1, firstStockQty)));
+      } else {
+        setShipmentProductId('');
+        setShipmentQty('1');
+      }
+    }).catch((error) => setMessage(jsonError(error)));
+  }, [shipmentSourceId, products]);
+  useEffect(() => {
+    if (!shipmentProductId) return;
+    setShipmentQty((current) => String(Math.min(Math.max(1, Number(current) || 1), Math.max(1, selectedStockQty))));
+  }, [shipmentProductId, selectedStockQty]);
+
+  const submitShipment = async (event: FormEvent) => {
+    event.preventDefault();
+    setShipmentBusy(true);
+    try {
+      const response = await api.createRouteShipment(Number(shipmentRouteId), {
+        product_id: Number(shipmentProductId),
+        qty: Number(shipmentQty),
+        from_pvz_id: Number(shipmentSourceId),
+        to_pvz_id: Number(shipmentTargetId),
+      });
+      setMessage('Перемещение #' + response.id + ' создано: ' + response.qty + ' шт. «' + response.product_name + '» отправляется в ' + response.to_label + '.');
+      await load();
+      onRefresh?.();
+      const items = await api.getStock(Number(shipmentSourceId));
+      setSourceStock(items);
+    } catch (error) { setMessage(jsonError(error)); }
+    finally { setShipmentBusy(false); }
+  };
 
   const calculate = async () => {
     setBusy(true);
@@ -474,6 +551,33 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
         </div>
       </Panel>
     </div>
+    <Panel title="Отправить товар по рейсу" subtitle="Выберите точки из остановок активного рейса, товар из доступного остатка и количество">
+      <form className="workspace-form" onSubmit={submitShipment}>
+        <label>Действующий рейс<select value={shipmentRouteId} onChange={(e) => setShipmentRouteId(e.target.value)} required>
+          <option value="">Выберите рейс</option>{activeRoutes.map((route) => <option key={route.id} value={route.id}>{route.name} · {route.stop_pvz_ids.map((id: number) => '#' + id).join(' → ')}</option>)}
+        </select></label>
+        <div className="workspace-form-grid">
+          <label>Откуда отправить<select value={shipmentSourceId} onChange={(e) => setShipmentSourceId(e.target.value)} required>
+            {shipmentStops.map((id) => <option key={id} value={id}>#{id} · {locName(id)}</option>)}
+          </select></label>
+          <label>На какой ПВЗ доставить<select value={shipmentTargetId} onChange={(e) => setShipmentTargetId(e.target.value)} required>
+            {laterStops.map((id) => <option key={id} value={id}>#{id} · {locName(id)}</option>)}
+          </select></label>
+        </div>
+        <div className="workspace-form-grid">
+          <label>Товар<select value={shipmentProductId} onChange={(e) => setShipmentProductId(e.target.value)} required>
+            <option value="">Выберите товар</option>{availableProducts.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.sku} · {sourceStock.filter((stock) => stock.product_id === product.id && stock.status === 'STORED').reduce((sum, stock) => sum + Number(stock.qty), 0)} шт. доступно</option>)}
+          </select></label>
+          <label>Количество, шт.<input type="number" min="1" max={selectedStockQty} value={shipmentQty} onChange={(e) => setShipmentQty(e.target.value)} required /></label>
+        </div>
+        <p className="workspace-help">После создания перемещения выбранное количество будет зарезервировано на отправлении. Остаток на целевом ПВЗ изменится только после подтверждения доставки.</p>
+        <button className="workspace-button primary" disabled={shipmentBusy || !shipmentRouteId || !shipmentSourceId || !shipmentTargetId || !shipmentProductId || selectedStockQty < 1 || Number(shipmentQty) < 1 || Number(shipmentQty) > selectedStockQty}>
+          {shipmentBusy ? 'Создаём перемещение…' : 'Создать отправку по рейсу'}
+        </button>
+        {!activeRoutes.length && <div className="workspace-empty">Сначала постройте и сохраните действующий рейс.</div>}
+        {activeRoutes.length > 0 && !availableProducts.length && <div className="workspace-empty">На выбранном ПВЗ отправления нет доступных товаров со статусом «На хранении».</div>}
+      </form>
+    </Panel>
     <Panel title="Действующие маршруты" subtitle="Перемещения назначаются в рейс только при соблюдении порядка остановок">
       <div className="route-list">
         {routes.map((route) => <div className="route-list-row" key={route.id}><span className="route-icon">↗</span><div><strong>{route.name}</strong><small>{route.stop_pvz_ids.map((id: number) => '#' + id + ' ' + locName(id)).join(' → ')}</small></div><div className="assortment-metric"><strong>{route.distance_km ?? '—'} км</strong><small>по дорогам</small></div><span className={route.is_active ? 'route-active' : 'route-inactive'}>{route.is_active ? 'Активен' : 'Остановлен'}</span><button className="workspace-button small" disabled={busy} onClick={() => toggleRoute(route)}>{route.is_active ? 'Остановить' : 'Включить'}</button></div>)}
@@ -482,7 +586,6 @@ export function RoutesWorkspace({ pvzList }: WorkspaceProps) {
     </Panel>
   </div>;
 }
-
 export function TransfersWorkspace({ onRefresh }: WorkspaceProps) {
   const [transfers, setTransfers] = useState<any[]>([]);
   const [busyId, setBusyId] = useState<number | null>(null);

@@ -95,6 +95,13 @@ class TruckRouteCreate(BaseModel):
     is_active: bool = True
 
 
+class RouteShipmentCreate(BaseModel):
+    product_id: int = Field(gt=0)
+    qty: int = Field(ge=1)
+    from_pvz_id: int = Field(gt=0)
+    to_pvz_id: int = Field(gt=0)
+
+
 class ProductDimensionsUpdate(BaseModel):
     length_cm: float = Field(gt=0, le=2000)
     width_cm: float = Field(gt=0, le=2000)
@@ -736,6 +743,70 @@ def create_truck_route(body: TruckRouteCreate, db: Session = Depends(get_db)):
     _refresh_waiting_transfers(db)
     db.commit()
     return {"id": route.id, "name": route.name, "distance_km": round(distance, 2)}
+
+
+@router.post("/network/routes/{route_id}/shipments")
+def create_route_shipment(route_id: int, body: RouteShipmentCreate, db: Session = Depends(get_db)):
+    route = db.query(TruckRoute).filter(
+        TruckRoute.id == route_id,
+        TruckRoute.is_active.is_(True),
+    ).first()
+    if not route:
+        raise HTTPException(404, "Действующий рейс не найден")
+    stops = db.query(TruckRouteStop).filter(
+        TruckRouteStop.route_id == route.id
+    ).order_by(TruckRouteStop.sequence_no).all()
+    stop_ids = [stop.pvz_id for stop in stops]
+    if body.from_pvz_id not in stop_ids or body.to_pvz_id not in stop_ids:
+        raise HTTPException(409, "Точки отправления и назначения должны входить в выбранный рейс")
+    if stop_ids.index(body.from_pvz_id) >= stop_ids.index(body.to_pvz_id):
+        raise HTTPException(409, "ПВЗ назначения должен находиться после точки отправления в выбранном рейсе")
+    source = db.query(PVZ).filter(PVZ.id == body.from_pvz_id).first()
+    target = db.query(PVZ).filter(PVZ.id == body.to_pvz_id).first()
+    product = db.query(Product).filter(Product.id == body.product_id).first()
+    if not source or not target or not product:
+        raise HTTPException(404, "Не найдена точка или товар")
+    if target.is_hub:
+        raise HTTPException(409, "В этой форме можно выбрать только ПВЗ назначения")
+    if not source.is_mesh_enabled or not target.is_mesh_enabled:
+        raise HTTPException(409, "Обе точки должны быть подключены к Mesh")
+    available = db.query(StockItem).filter(
+        StockItem.pvz_id == source.id,
+        StockItem.product_id == product.id,
+        StockItem.status == "STORED",
+        StockItem.qty > 0,
+    ).all()
+    available_qty = sum(row.qty for row in available)
+    if body.qty > available_qty:
+        raise HTTPException(409, f"Недостаточно доступного товара: на отправлении {available_qty} шт., запрошено {body.qty} шт.")
+    distance = _route_distance(db, stop_ids[stop_ids.index(source.id):stop_ids.index(target.id) + 1])
+    if distance is None:
+        raise HTTPException(409, "Не удалось рассчитать расстояние между остановками выбранного рейса")
+    transfer = _create_transfer(
+        db, product.id, body.qty, source.id, target.id, "manual_route_shipment"
+    )
+    if not transfer:
+        raise HTTPException(409, "Не удалось зарезервировать выбранное количество товара")
+    # Keep the operator's explicitly selected active route, not another matching route.
+    transfer.route_id = route.id
+    transfer.distance_km = distance
+    transfer.status = "READY_ON_ROUTE"
+    db.commit()
+    db.refresh(transfer)
+    return {
+        "id": transfer.id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "qty": transfer.qty,
+        "from_pvz_id": source.id,
+        "to_pvz_id": target.id,
+        "from_label": _pvz_label(source),
+        "to_label": _pvz_label(target),
+        "route_id": route.id,
+        "route_name": route.name,
+        "distance_km": round(distance, 2),
+        "status": transfer.status,
+    }
 
 
 @router.patch("/network/routes/{route_id}/active")
