@@ -26,7 +26,7 @@ from app.models import (
     get_db,
     utcnow,
 )
-from app.tariffs import HUB_PER_KM
+from app.tariffs import HUB_PER_KM, TOP_RECHECK_DAYS
 
 router = APIRouter(tags=["operations", "returns", "finance"])
 OCCUPIED_STATUSES = ("ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER", "RETURNED", "DAMAGED")
@@ -138,6 +138,63 @@ def _release_order_holds(db: Session, order: Order) -> int:
             _stock_transition(db, item, "STORED", order.id)
         item.order_id = None
     return len(rows)
+
+
+def run_stock_maintenance(db: Session) -> dict:
+    """Expire overdue sellable stock and refresh stale TOP flags."""
+    now = utcnow()
+    overdue = db.query(StockItem).filter(
+        StockItem.status == "STORED",
+        StockItem.qty > 0,
+        StockItem.storage_deadline.is_not(None),
+        StockItem.storage_deadline <= now,
+    ).order_by(StockItem.id).all()
+
+    expired_count = 0
+    for item in overdue:
+        _stock_transition(db, item, "EXPIRED")
+        incident = db.query(InventoryIncident).filter(
+            InventoryIncident.stock_item_id == item.id,
+            InventoryIncident.incident_type == "STOCK_EXPIRED",
+            InventoryIncident.status == "OPEN",
+        ).first()
+        if not incident:
+            _create_incident(
+                db,
+                incident_type="STOCK_EXPIRED",
+                severity="warning",
+                message=f"Срок хранения партии #{item.id} истёк. Требуется подтвердить возврат товара продавцу.",
+                pvz_id=item.pvz_id,
+                stock_item_id=item.id,
+            )
+        expired_count += 1
+
+    cutoff = now - timedelta(days=TOP_RECHECK_DAYS)
+    locations = db.query(PVZ).all()
+    rechecked = []
+    from app.network import calculate_assortment
+
+    for location in locations:
+        stale = db.query(StockItem.id).filter(
+            StockItem.pvz_id == location.id,
+            StockItem.status.in_(("ACCEPTED", "STORED")),
+            (
+                (StockItem.last_top_check.is_(None))
+                | (StockItem.last_top_check <= cutoff)
+            ),
+        ).limit(1).first()
+        if stale:
+            calculate_assortment(db, location, sync_flags=True)
+            rechecked.append(location.id)
+
+    db.flush()
+    return {
+        "expired_items": expired_count,
+        "expired_stock_item_ids": [item.id for item in overdue],
+        "top_rechecked_pvz_ids": rechecked,
+        "top_rechecked_count": len(rechecked),
+        "top_recheck_interval_days": TOP_RECHECK_DAYS,
+    }
 
 
 def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
@@ -315,6 +372,13 @@ def process_return(db: Session, order: Order, body: ReturnRequest) -> Return:
     ))
     db.flush()
     return row
+
+
+@router.post("/ops/stock/maintenance")
+def stock_maintenance(db: Session = Depends(get_db)):
+    result = run_stock_maintenance(db)
+    db.commit()
+    return result
 
 
 @router.get("/returns")
