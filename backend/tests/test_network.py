@@ -7,8 +7,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base, PVZ, Product, RoadEdge, Seller, TruckRoute, TruckRouteStop, WeeklyDemand, utcnow
-from app.network import calculate_assortment, category_volume_limit, shortest_path
+from app.models import Base, PVZ, Product, RoadEdge, Seller, StockItem, TruckRoute, TruckRouteStop, WeeklyDemand, utcnow
+from app.network import _create_transfer, calculate_assortment, category_volume_limit, shortest_path
 
 
 @pytest.fixture()
@@ -111,3 +111,53 @@ def test_assortment_is_automatic_top_five_and_respects_dimensions(db):
     oversized_candidate = next(row for row in result["candidates"] if row["product_id"] == products[5].id)
     assert oversized_candidate["allocatable_qty"] == 0
     assert "Крупногабаритный" in oversized_candidate["excluded_reason"]
+
+
+def test_transfer_reserves_exact_stock_amount_and_links_to_route(db):
+    seller = Seller(name="Seller", commission_rate=0.15)
+    source = PVZ(city="Казань", address="ПВЗ отправления", storage_area_m2=10, storage_height_m=2)
+    target = PVZ(city="Казань", address="ПВЗ назначения", storage_area_m2=10, storage_height_m=2)
+    db.add_all([seller, source, target])
+    db.flush()
+    product = Product(
+        seller_id=seller.id, sku="TRANSFER-1", name="Товар для рейса",
+        price=1000, category="одежда", length_cm=10, width_cm=10, height_cm=10,
+    )
+    db.add(product)
+    db.flush()
+
+    db.add_all([
+        StockItem(
+            product_id=product.id, pvz_id=source.id, qty=5, status="STORED",
+            accepted_at=utcnow() - timedelta(days=2), ttl_days=7,
+        ),
+        StockItem(
+            product_id=product.id, pvz_id=source.id, qty=4, status="STORED",
+            accepted_at=utcnow() - timedelta(days=1), ttl_days=7,
+        ),
+    ])
+    db.flush()
+
+    transfer = _create_transfer(
+        db, product_id=product.id, qty=7,
+        from_id=source.id, to_id=target.id, reason="test",
+    )
+    db.flush()
+
+    reserved = db.query(StockItem).filter(
+        StockItem.pvz_id == source.id,
+        StockItem.product_id == product.id,
+        StockItem.status == "IN_TRANSFER",
+    ).all()
+    sellable = db.query(StockItem).filter(
+        StockItem.pvz_id == source.id,
+        StockItem.product_id == product.id,
+        StockItem.status == "STORED",
+    ).all()
+
+    assert transfer is not None
+    assert transfer.status == "WAITING_ROUTE"
+    assert transfer.qty == 7
+    assert sum(row.qty for row in reserved) == 7
+    assert all(row.transfer_id == transfer.id for row in reserved)
+    assert sum(row.qty for row in sellable) == 2
