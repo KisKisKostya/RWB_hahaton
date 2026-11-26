@@ -49,7 +49,7 @@ CITY_COORDS = {
     "Москва": (55.755, 37.617),
 }
 
-OCCUPIED_STATUSES = {"ACCEPTED", "STORED", "RESERVED", "ASSEMBLED"}
+OCCUPIED_STATUSES = {"ACCEPTED", "STORED", "RESERVED", "ASSEMBLED", "IN_TRANSFER"}
 
 app = FastAPI(title="Mesh MVP", version="0.1.0")
 app.add_middleware(
