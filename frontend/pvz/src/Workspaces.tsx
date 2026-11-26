@@ -309,12 +309,19 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
   const [weekStart, setWeekStart] = useState(() => new Date().toISOString().slice(0, 10));
   const [assortment, setAssortment] = useState<Assortment | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [demandHistory, setDemandHistory] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
   const load = async () => {
-    try { setAssortment(await api.getAssortment(selectedPvzId)); }
-    catch (error) { setMessage(jsonError(error)); }
+    try {
+      const [nextAssortment, history] = await Promise.all([
+        api.getAssortment(selectedPvzId),
+        api.getDemandHistory(selectedPvzId),
+      ]);
+      setAssortment(nextAssortment);
+      setDemandHistory(history);
+    } catch (error) { setMessage(jsonError(error)); }
   };
   useEffect(() => {
     load();
@@ -332,6 +339,7 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
     try {
       const result = await api.uploadDemand(selectedPvzId, { week_start: weekStart + "T00:00:00", rows });
       setAssortment(result.assortment);
+      setDemandHistory(await api.getDemandHistory(selectedPvzId));
       setMessage('Статистика сохранена. TOP-5 и потребность пересчитаны автоматически; создано перемещений: ' + result.planned_transfers.length + '.');
       onRefresh?.();
     } catch (error) { setMessage(jsonError(error)); }
@@ -370,6 +378,20 @@ export function DemandWorkspace({ selectedPvzId, onRefresh }: WorkspaceProps) {
           <div className="assortment-qty"><strong>{item.recommended_qty} шт.</strong><small>целевой запас</small></div><div className="assortment-metric"><strong>{item.current_qty} / {item.allocatable_qty}</strong><small>есть / пополнить</small></div>
         </div>)}
         {!assortment?.top_products?.length && <div className="workspace-empty">Пока нет статистики спроса. Загрузите недельный список покупок.</div>}
+      </div>
+    </Panel>
+
+    <Panel title="История недельной статистики" subtitle="Все сохранённые отчёты по выбранному ПВЗ">
+      <div className="demand-history-list">
+        {[...new Set(demandHistory.map((row) => row.week_start))].map((week) => (
+          <div className="demand-history-week" key={week}>
+            <strong>Неделя с {new Date(week + 'T00:00:00').toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+            <div>{demandHistory.filter((row) => row.week_start === week).map((row) => (
+              <span key={row.product_id}><b>#{row.product_id}</b> {row.product_name} · {row.quantity} шт.</span>
+            ))}</div>
+          </div>
+        ))}
+        {!demandHistory.length && <div className="workspace-empty">История появится после первой загрузки недельного отчёта.</div>}
       </div>
     </Panel>
     <Panel title="Ограничения ассортимента" subtitle="Позиции, исключённые из TOP или ограниченные по объёму хранения">
