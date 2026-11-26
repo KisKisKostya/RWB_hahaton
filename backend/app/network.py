@@ -420,7 +420,7 @@ def plan_rebalancing(db: Session) -> list[InventoryTransfer]:
                         StockItem.status.in_(ACTIVE_STOCK),
                     ).all()
                 )
-                deficit = max(desired["allocatable_qty"] - current, 0)
+                deficit = max(desired["recommended_qty"] - current, 0)
                 if deficit:
                     receiving.append((desired["weekly_demand"], target.id, deficit))
             if receiving:
@@ -455,6 +455,7 @@ def _refresh_waiting_transfers(db: Session) -> None:
 def network_map(db: Session = Depends(get_db)):
     locations = db.query(PVZ).order_by(PVZ.id).all()
     edges = db.query(RoadEdge).filter(RoadEdge.is_active.is_(True)).all()
+    routes = db.query(TruckRoute).filter(TruckRoute.is_active.is_(True)).all()
     nodes = []
     for location in locations:
         lat, lon = _coords(location)
@@ -481,6 +482,15 @@ def network_map(db: Session = Depends(get_db)):
             "distance_km": edge.distance_km,
             "bidirectional": edge.bidirectional,
         } for edge in edges],
+        "routes": [{
+            "id": route.id,
+            "name": route.name,
+            "stop_pvz_ids": [
+                stop.pvz_id for stop in db.query(TruckRouteStop)
+                .filter(TruckRouteStop.route_id == route.id)
+                .order_by(TruckRouteStop.sequence_no).all()
+            ],
+        } for route in routes],
     }
 
 
