@@ -33,6 +33,7 @@ export const api = {
   getAssortment: (pvzId: number) => request('/network/assortment/' + pvzId),
   listTransfers: () => request('/network/transfers'),
   completeTransfer: (id: number) => request('/network/transfers/' + id + '/complete', { method: 'POST' }),
+  updateProductDimensions: (id: number, data: unknown) => request('/products/' + id + '/dimensions', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   sellerIntake: (data: unknown) => request('/seller/intake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
   getCustomerProfile: (id: number) => request('/customer/profile/' + id),
   updateCustomerProfile: (id: number, data: unknown) => request('/customer/profile/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }),
