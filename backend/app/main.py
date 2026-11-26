@@ -24,6 +24,7 @@ from app.models import (
     init_db,
     utcnow,
 )
+from app.routing import build_hub, build_local
 from app.tariffs import (
     ASSEMBLY_FEE,
     COMMISSION_RATE,
@@ -37,12 +38,6 @@ from app.tariffs import (
     TOP_RECHECK_DAYS,
     TTL_MAX,
     TTL_MIN,
-    hub_cost,
-    local_cost,
-    marketplace_margin,
-    pvz_income_hub,
-    pvz_income_local,
-    seller_payout,
     storage_fee as calc_storage_fee,
 )
 
@@ -199,65 +194,21 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
     if not product or not buyer_pvz:
         raise HTTPException(404, "product or buyer_pvz not found")
 
-    # clear previous options
     db.query(RouteOption).filter(RouteOption.order_id == order.id).delete()
     db.flush()
 
-    options: list[RouteOption] = []
     local_item = find_local_stock(db, order.product_id, order.buyer_city)
     hub = find_hub(db)
 
-    # --- local ---
-    local_dist = 8.0
-    local_eta = 0.5
-    cost_local = local_cost(local_dist)
-    local_reject = None
-    local_feasible = True
-    source_pvz_id = None
-    stor = 0.0
-
-    if not local_item:
-        local_feasible = False
-        local_reject = "no_local_top_stock"
-    else:
-        source_pvz = db.query(PVZ).filter(PVZ.id == local_item.pvz_id).first()
-        source_pvz_id = source_pvz.id
-        stor = storage_fee(local_item.accepted_at, order.qty, source_pvz.storage_rate_day)
-        cap = capacity_snapshot(db, buyer_pvz, incoming=order.qty)
-        if not local_item.top_flag:
-            local_feasible = False
-            local_reject = "top_flag_false"
-        elif not cap["capacity_ok"]:
-            local_feasible = False
-            local_reject = "no_capacity"
-        local_dist = haversine_km(source_pvz.city, buyer_pvz.city)
-        if source_pvz.city == buyer_pvz.city:
-            local_dist = max(3.0, abs(source_pvz.id - buyer_pvz.id) * 2.5)
-        local_eta = 0.3 + local_dist / 80.0
-        cost_local = local_cost(local_dist)
-
-    income_local = pvz_income_local(order.qty, stor)
-    payout_local = seller_payout(product.price * order.qty, stor)
-    margin_local = marketplace_margin(product.price * order.qty, cost_local, income_local)
-
-    # --- hub ---
+    # --- hub first (local needs hub eta / marketplace_cost) ---
     hub_dist = 800.0
     hub_eta = 2.0
-    cost_hub = hub_cost(hub_dist)
-    hub_source_id = None
     hub_stor = 0.0
-    hub_feasible = True
-    hub_reject = None
-
-    if not hub:
-        hub_feasible = False
-        hub_reject = "no_hub"
-    else:
+    hub_source_id = None
+    if hub:
         hub_source_id = hub.id
         hub_dist = haversine_km(hub.city, buyer_pvz.city)
         hub_eta = 1.5 + hub_dist / 400.0
-        cost_hub = hub_cost(hub_dist)
-        # stock at hub for this product (optional)
         hub_item = (
             db.query(StockItem)
             .filter(
@@ -269,54 +220,83 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         )
         if hub_item:
             hub_stor = storage_fee(hub_item.accepted_at, order.qty, hub.storage_rate_day)
-        else:
-            # still feasible via hub magistral (inbound)
-            hub_stor = 0.0
 
-    income_hub = pvz_income_hub(order.qty, hub_stor)
-    payout_hub = seller_payout(product.price * order.qty, hub_stor)
-    margin_hub = marketplace_margin(product.price * order.qty, cost_hub, income_hub)
+    hub_data = build_hub(
+        dist=hub_dist,
+        eta_days=hub_eta,
+        price=product.price,
+        qty=order.qty,
+        storage_fee=hub_stor,
+        source_pvz_id=hub_source_id,
+        hub_available=hub is not None,
+    )
 
-    # local feasibility vs hub
-    if local_feasible and local_item:
-        if local_eta > hub_eta - 0.5:
-            local_feasible = False
-            local_reject = "eta_local_worse_than_hub"
-        elif cost_local > cost_hub:
-            local_feasible = False
-            local_reject = "local_cost_worse_than_hub"
+    # --- local ---
+    local_dist = 8.0
+    local_eta = 0.5
+    stor = 0.0
+    source_pvz_id = None
+    top_flag = False
+    has_stock = local_item is not None
+    cap = capacity_snapshot(db, buyer_pvz, incoming=order.qty)
+
+    if local_item:
+        source_pvz = db.query(PVZ).filter(PVZ.id == local_item.pvz_id).first()
+        source_pvz_id = source_pvz.id
+        top_flag = bool(local_item.top_flag)
+        stor = storage_fee(local_item.accepted_at, order.qty, source_pvz.storage_rate_day)
+        local_dist = haversine_km(source_pvz.city, buyer_pvz.city)
+        if source_pvz.city == buyer_pvz.city:
+            local_dist = max(3.0, abs(source_pvz.id - buyer_pvz.id) * 2.5)
+        local_eta = 0.3 + local_dist / 80.0
+
+    local_data = build_local(
+        dist=local_dist,
+        eta_days=local_eta,
+        price=product.price,
+        qty=order.qty,
+        storage_fee=stor,
+        top_flag=top_flag,
+        occupied=cap["occupied"] + cap["reserved"],
+        incoming=order.qty,
+        capacity_units=buyer_pvz.capacity_units,
+        reserve_pct=buyer_pvz.reserve_pct or RESERVE_PCT,
+        hub_eta=hub_data["eta_days"],
+        hub_marketplace_cost=hub_data["marketplace_cost"],
+        source_pvz_id=source_pvz_id,
+        has_stock=has_stock,
+    )
 
     local_opt = RouteOption(
         order_id=order.id,
-        type="local",
-        cost=round(cost_local, 2),
-        eta_days=round(local_eta, 2),
-        distance_km=round(local_dist, 2),
-        pvz_income=round(income_local, 2),
-        marketplace_margin=round(margin_local, 2),
-        seller_payout=round(payout_local, 2),
-        feasible=local_feasible,
-        reject_reason=local_reject,
-        source_pvz_id=source_pvz_id,
+        type=local_data["type"],
+        cost=local_data["cost"],
+        eta_days=local_data["eta_days"],
+        distance_km=local_data["distance_km"],
+        pvz_income=local_data["pvz_income"],
+        marketplace_margin=local_data["marketplace_margin"],
+        seller_payout=local_data["seller_payout"],
+        feasible=local_data["feasible"],
+        reject_reason=local_data["reject_reason"],
+        source_pvz_id=local_data["source_pvz_id"],
     )
     hub_opt = RouteOption(
         order_id=order.id,
-        type="hub",
-        cost=round(cost_hub, 2),
-        eta_days=round(hub_eta, 2),
-        distance_km=round(hub_dist, 2),
-        pvz_income=round(income_hub, 2),
-        marketplace_margin=round(margin_hub, 2),
-        seller_payout=round(payout_hub, 2),
-        feasible=hub_feasible,
-        reject_reason=hub_reject,
-        source_pvz_id=hub_source_id,
+        type=hub_data["type"],
+        cost=hub_data["cost"],
+        eta_days=hub_data["eta_days"],
+        distance_km=hub_data["distance_km"],
+        pvz_income=hub_data["pvz_income"],
+        marketplace_margin=hub_data["marketplace_margin"],
+        seller_payout=hub_data["seller_payout"],
+        feasible=hub_data["feasible"],
+        reject_reason=hub_data["reject_reason"],
+        source_pvz_id=hub_data["source_pvz_id"],
     )
     db.add(local_opt)
     db.add(hub_opt)
     db.flush()
-    options.extend([local_opt, hub_opt])
-    return options
+    return [local_opt, hub_opt]
 
 
 # ---------- endpoints ----------
