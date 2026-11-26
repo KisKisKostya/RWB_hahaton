@@ -318,6 +318,13 @@ def build_route_options(db: Session, order: Order) -> list[RouteOption]:
         source_pvz = db.query(PVZ).filter(PVZ.id == local_item.pvz_id).first()
         source_pvz_id = source_pvz.id
         top_flag = bool(local_item.top_flag)
+        local_rows = db.query(StockItem).filter(
+            StockItem.product_id == order.product_id,
+            StockItem.pvz_id == source_pvz_id,
+            StockItem.status.in_(("ACCEPTED", "STORED")),
+            StockItem.top_flag.is_(True),
+        ).all()
+        has_stock = sum(row.qty for row in local_rows) >= order.qty
         stor = storage_fee(local_item.accepted_at, order.qty, source_pvz.storage_rate_day)
         local_dist = haversine_km(source_pvz.city, buyer_pvz.city)
         if source_pvz.city == buyer_pvz.city:
