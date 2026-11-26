@@ -65,6 +65,7 @@ PRODUCT_NAMES = [
 
 def clear(db) -> None:
     for table in (
+        "inventory_incidents",
         "inventory_transfers",
         "truck_route_stops",
         "truck_routes",
@@ -157,7 +158,7 @@ def seed(reset: bool = False) -> None:
             ),
             PVZ(
                 city="Казань",
-                address="ул. Чистопольская,  набережная",
+                address="ул. Чистопольская, 25",
                 capacity_units=75,
                 reserve_pct=0.20,
                 peak_factor=1.1,
@@ -189,7 +190,7 @@ def seed(reset: bool = False) -> None:
             ),
             PVZ(
                 city="Москва",
-                address="Варшавское ш., е 26",
+                address="Варшавское ш., 26",
                 capacity_units=85,
                 reserve_pct=0.20,
                 peak_factor=1.1,
