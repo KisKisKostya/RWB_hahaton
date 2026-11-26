@@ -230,6 +230,7 @@ function App() {
     return matchesSearch && matchesFilter;
   });
 
+  const isWorkspaceTab = ['network', 'demand', 'routes', 'transfers', 'seller', 'customer'].includes(tab);
   const currentTitle = navGroups.flatMap((group) => group.items).find((item) => item.id === tab)?.label || 'Обзор';
   const now = new Date();
   const greeting = now.getHours() < 12 ? 'Доброе утро' : now.getHours() < 18 ? 'Добрый день' : 'Добрый вечер';
@@ -251,17 +252,6 @@ function App() {
       setError(err instanceof Error ? err.message : 'Ошибка приёмки товара');
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleRelocate = async (item: StockItem) => {
-    try {
-      const target = pvzList.find((location) => location.id !== selectedPvzId && !location.is_hub);
-      if (!target) throw new Error('Нет другого ПВЗ для перемещения');
-      await api.relocate(item.id, { target_pvz_id: target.id, reason: 'manual' });
-      await loadData();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка перемещения');
     }
   };
 
@@ -313,7 +303,7 @@ function App() {
                 )}
                 <td className="action-cell">
                   {item.status === 'STORED' && (
-                    <button className="icon-button" title="Переместить на другой ПВЗ" onClick={() => handleRelocate(item)}>
+                    <button className="icon-button" title="Переместить на другой ПВЗ" onClick={() => setTab('transfers')}>
                       <Icon name="arrow" size={17} />
                     </button>
                   )}
@@ -419,7 +409,7 @@ function App() {
         </header>
 
         <div className="page-content">
-          <section className="page-heading">
+          <section className="page-heading" style={isWorkspaceTab ? { display: 'none' } : undefined}>
             <div>
               <div className="eyebrow">{greeting}, команда</div>
               <h1>{tab === 'dash' ? 'Обзор пункта выдачи' : currentTitle}</h1>
